@@ -5,8 +5,6 @@
 //! The consent page opens in the user's default browser; the app never embeds
 //! a web view.
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -24,7 +22,6 @@ const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const SCOPE: &str = "https://www.googleapis.com/auth/youtube.readonly";
 const KEYRING_SERVICE: &str = "yt-lite";
 const KEYRING_USER: &str = "google-refresh-token";
-const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug)]
 pub struct NotSignedIn;
@@ -127,22 +124,21 @@ impl Auth {
         ));
     }
 
-    /// Interactive sign-in. Opens the system browser and waits (blocking, up to
-    /// 5 minutes) for Google to redirect back to a loopback port.
-    pub fn sign_in(&self) -> Result<()> {
+    /// Starts an authorization-code + PKCE flow for `redirect_uri`. The
+    /// front-end opens `request.url` in a browser (desktop: system browser;
+    /// iOS: ASWebAuthenticationSession) and passes the returned `code` to
+    /// [`Auth::complete_sign_in`].
+    pub fn begin_sign_in(&self, redirect_uri: &str) -> Result<AuthRequest> {
         if self.google.client_id.trim().is_empty() {
             bail!("google.client_id is not set in config.toml");
         }
-        let listener = TcpListener::bind("127.0.0.1:0").context("binding loopback port")?;
-        let redirect_uri = format!("http://127.0.0.1:{}", listener.local_addr()?.port());
         let verifier = random_token(32)?;
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
         let state = random_token(16)?;
-
         let mut url = url::Url::parse(AUTH_URL)?;
         url.query_pairs_mut()
             .append_pair("client_id", self.google.client_id.trim())
-            .append_pair("redirect_uri", &redirect_uri)
+            .append_pair("redirect_uri", redirect_uri)
             .append_pair("response_type", "code")
             .append_pair("scope", SCOPE)
             .append_pair("code_challenge", &challenge)
@@ -150,23 +146,30 @@ impl Auth {
             .append_pair("access_type", "offline")
             .append_pair("prompt", "consent")
             .append_pair("state", &state);
-        log::info!("opening browser for Google sign-in");
-        open::that_detached(url.as_str()).context("opening browser")?;
+        Ok(AuthRequest {
+            url: url.into(),
+            state,
+            verifier,
+            redirect_uri: redirect_uri.to_string(),
+        })
+    }
 
-        let code = wait_for_code(&listener, &state)?;
+    /// Exchanges the authorization code and stores the refresh token.
+    pub fn complete_sign_in(&self, request: &AuthRequest, code: &str) -> Result<()> {
+        let mut form = vec![
+            ("client_id", self.google.client_id.trim()),
+            ("code", code),
+            ("code_verifier", request.verifier.as_str()),
+            ("redirect_uri", request.redirect_uri.as_str()),
+            ("grant_type", "authorization_code"),
+        ];
+        // iOS OAuth clients have no secret.
+        if !self.google.client_secret.trim().is_empty() {
+            form.push(("client_secret", self.google.client_secret.trim()));
+        }
         let resp: TokenResponse = self
             .http
-            .post_form(
-                TOKEN_URL,
-                &[
-                    ("client_id", self.google.client_id.trim()),
-                    ("client_secret", self.google.client_secret.trim()),
-                    ("code", &code),
-                    ("code_verifier", &verifier),
-                    ("redirect_uri", &redirect_uri),
-                    ("grant_type", "authorization_code"),
-                ],
-            )
+            .post_form(TOKEN_URL, &form)
             .context("exchanging authorization code")?;
         let refresh = resp
             .refresh_token
@@ -179,6 +182,27 @@ impl Auth {
         log::info!("signed in");
         Ok(())
     }
+
+    /// Desktop sign-in: opens the system browser and waits (blocking, up to
+    /// 5 minutes) for Google to redirect back to a loopback port.
+    #[cfg(feature = "loopback-auth")]
+    pub fn sign_in(&self) -> Result<()> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").context("binding loopback port")?;
+        let redirect_uri = format!("http://127.0.0.1:{}", listener.local_addr()?.port());
+        let request = self.begin_sign_in(&redirect_uri)?;
+        log::info!("opening browser for Google sign-in");
+        open::that_detached(&request.url).context("opening browser")?;
+        let code = loopback::wait_for_code(&listener, &request.state)?;
+        self.complete_sign_in(&request, &code)
+    }
+}
+
+/// An in-progress sign-in (PKCE verifier and CSRF state).
+pub struct AuthRequest {
+    pub url: String,
+    pub state: String,
+    verifier: String,
+    redirect_uri: String,
 }
 
 fn random_token(bytes: usize) -> Result<String> {
@@ -187,63 +211,74 @@ fn random_token(bytes: usize) -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(buf))
 }
 
-fn wait_for_code(listener: &TcpListener, expected_state: &str) -> Result<String> {
-    listener.set_nonblocking(true)?;
-    let deadline = Instant::now() + SIGN_IN_TIMEOUT;
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                stream.set_nonblocking(false)?;
-                if let Some(result) = handle_redirect(stream, expected_state)? {
-                    return result;
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                if Instant::now() > deadline {
-                    bail!("timed out waiting for Google sign-in");
-                }
-                std::thread::sleep(Duration::from_millis(200));
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-}
+#[cfg(feature = "loopback-auth")]
+mod loopback {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
 
-/// Returns `None` for unrelated requests (e.g. /favicon.ico).
-fn handle_redirect(mut stream: TcpStream, expected_state: &str) -> Result<Option<Result<String>>> {
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line)?;
-    let path = line.split_whitespace().nth(1).unwrap_or("/");
-    let parsed = url::Url::parse(&format!("http://localhost{path}"))?;
-    let param = |k: &str| {
-        parsed
-            .query_pairs()
-            .find(|(key, _)| key == k)
-            .map(|(_, v)| v.into_owned())
-    };
-    let (code, state, error) = (param("code"), param("state"), param("error"));
-    if code.is_none() && error.is_none() {
-        let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
-        return Ok(None);
-    }
-    let result = match (code, error) {
-        (_, Some(err)) => Err(anyhow!("Google sign-in failed: {err}")),
-        (Some(_), _) if state.as_deref() != Some(expected_state) => {
-            Err(anyhow!("sign-in state mismatch"))
+    use anyhow::{Result, anyhow, bail};
+
+    const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
+
+    pub(super) fn wait_for_code(listener: &TcpListener, expected_state: &str) -> Result<String> {
+        listener.set_nonblocking(true)?;
+        let deadline = Instant::now() + SIGN_IN_TIMEOUT;
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false)?;
+                    if let Some(result) = handle_redirect(stream, expected_state)? {
+                        return result;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() > deadline {
+                        bail!("timed out waiting for Google sign-in");
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
-        (Some(code), None) => Ok(code),
-        (None, None) => unreachable!(),
-    };
-    let body = if result.is_ok() {
-        "Signed in to yt-lite. You can close this tab."
-    } else {
-        "yt-lite sign-in failed. Return to the app for details."
-    };
-    let _ = write!(
-        stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    Ok(Some(result))
+    }
+
+    /// Returns `None` for unrelated requests (e.g. /favicon.ico).
+    fn handle_redirect(mut stream: TcpStream, expected_state: &str) -> Result<Option<Result<String>>> {
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let mut line = String::new();
+        BufReader::new(&stream).read_line(&mut line)?;
+        let path = line.split_whitespace().nth(1).unwrap_or("/");
+        let parsed = url::Url::parse(&format!("http://localhost{path}"))?;
+        let param = |k: &str| {
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.into_owned())
+        };
+        let (code, state, error) = (param("code"), param("state"), param("error"));
+        if code.is_none() && error.is_none() {
+            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+            return Ok(None);
+        }
+        let result = match (code, error) {
+            (_, Some(err)) => Err(anyhow!("Google sign-in failed: {err}")),
+            (Some(_), _) if state.as_deref() != Some(expected_state) => {
+                Err(anyhow!("sign-in state mismatch"))
+            }
+            (Some(code), None) => Ok(code),
+            (None, None) => unreachable!(),
+        };
+        let body = if result.is_ok() {
+            "Signed in to yt-lite. You can close this tab."
+        } else {
+            "yt-lite sign-in failed. Return to the app for details."
+        };
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        Ok(Some(result))
+    }
 }

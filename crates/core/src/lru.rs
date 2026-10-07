@@ -41,7 +41,6 @@ impl<K: Hash + Eq + Clone, V> WeightedLru<K, V> {
         self.weight
     }
 
-    #[cfg(test)]
     pub fn cap(&self) -> usize {
         self.cap
     }

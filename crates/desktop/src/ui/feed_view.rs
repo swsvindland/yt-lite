@@ -27,6 +27,7 @@ use crate::feed::pipeline::{self, Services};
 use crate::player::Player;
 use crate::thumbs::{self, Thumbnails};
 use crate::youtube::{duration::format_clock, watch_url};
+use crate::{OpenConfigFolder, Refresh, ToggleHideWatched};
 
 const CARD_W: f32 = 320.;
 const THUMB_H: f32 = 180.;
@@ -79,6 +80,7 @@ pub struct FeedView {
     memory: Option<Entity<MemoryIndicator>>,
     idle_trim: Option<Task<()>>,
     _activation: Subscription,
+    focus: FocusHandle,
     _timer: Task<()>,
 }
 
@@ -138,8 +140,10 @@ impl FeedView {
             memory,
             idle_trim: None,
             _activation: activation,
+            focus: cx.focus_handle(),
             _timer: timer,
         };
+        this.focus.focus(window, cx);
         this.startup(window, cx);
         this
     }
@@ -152,7 +156,7 @@ impl FeedView {
         let disk_cap = services.config.cache.thumb_disk_mb * 1024 * 1024;
         cx.spawn_in(window, async move |this, cx| {
             let (signed_in, last) = smol::unblock(move || {
-                match thumbs::prune_disk(&thumbs_dir, disk_cap) {
+                match yt_lite_core::thumbcache::prune_disk(&thumbs_dir, disk_cap) {
                     Ok(n) if n > 0 => log::info!("pruned {n} cached thumbnails"),
                     Err(e) => log::warn!("thumbnail prune failed: {e:#}"),
                     _ => {}
@@ -460,6 +464,15 @@ impl FeedView {
         .detach();
     }
 
+    fn open_config_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dir = self.paths.config_file.parent().map(|p| p.to_path_buf());
+        if let Some(dir) = dir
+            && let Err(e) = open::that_detached(&dir)
+        {
+            window.push_notification(Notification::error(e.to_string()), cx);
+        }
+    }
+
     fn columns(&self, window: &Window) -> usize {
         let width = f32::from(window.viewport_size().width) - SIDE_PAD * 2.;
         (((width + GAP) / (CARD_W + GAP)).floor() as usize).max(1)
@@ -651,14 +664,7 @@ impl FeedView {
                     .small()
                     .icon(IconName::Settings)
                     .tooltip("Open config folder")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let dir = this.paths.config_file.parent().map(|p| p.to_path_buf());
-                        if let Some(dir) = dir
-                            && let Err(e) = open::that_detached(&dir)
-                        {
-                            window.push_notification(Notification::error(e.to_string()), cx);
-                        }
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.open_config_folder(window, cx))),
             )
             .child(auth_button)
             .into_any_element()
@@ -717,6 +723,13 @@ impl Render for FeedView {
         let toolbar = self.render_toolbar(cx);
         let theme = cx.theme();
         v_flex()
+            .track_focus(&self.focus)
+            .key_context("FeedView")
+            .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleHideWatched, _, cx| this.toggle_hide_watched(cx)))
+            .on_action(cx.listener(|this, _: &OpenConfigFolder, window, cx| {
+                this.open_config_folder(window, cx)
+            }))
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)

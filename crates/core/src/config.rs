@@ -143,20 +143,15 @@ pub struct Paths {
 impl Paths {
     pub fn resolve() -> Result<Self> {
         // YT_LITE_HOME puts everything under one folder (portable mode).
-        let (config_dir, data_dir, cache_dir) = match std::env::var_os("YT_LITE_HOME") {
-            Some(home) => {
-                let home = PathBuf::from(home);
-                (home.clone(), home.join("data"), home.join("cache"))
-            }
-            None => {
-                let dirs = ProjectDirs::from("", "", "yt-lite").context("no home directory")?;
-                (
-                    dirs.config_dir().to_path_buf(),
-                    dirs.data_local_dir().to_path_buf(),
-                    dirs.cache_dir().to_path_buf(),
-                )
-            }
-        };
+        if let Some(home) = std::env::var_os("YT_LITE_HOME") {
+            return Ok(Self::in_dir(PathBuf::from(home)));
+        }
+        let dirs = ProjectDirs::from("", "", "yt-lite").context("no home directory")?;
+        let (config_dir, data_dir, cache_dir) = (
+            dirs.config_dir().to_path_buf(),
+            dirs.data_local_dir().to_path_buf(),
+            dirs.cache_dir().to_path_buf(),
+        );
         let config_file = std::env::var_os("YT_LITE_CONFIG")
             .map(PathBuf::from)
             .unwrap_or_else(|| config_dir.join("config.toml"));
@@ -166,6 +161,16 @@ impl Paths {
             data_dir,
             cache_dir,
         })
+    }
+
+    /// Everything under one root (portable mode, mobile app containers).
+    pub fn in_dir(root: PathBuf) -> Self {
+        Self {
+            config_file: root.join("config.toml"),
+            config_dir: root.clone(),
+            data_dir: root.join("data"),
+            cache_dir: root.join("cache"),
+        }
     }
 
     pub fn db_file(&self) -> PathBuf {

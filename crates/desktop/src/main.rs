@@ -1,17 +1,12 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod auth;
-mod config;
-mod db;
-mod feed;
-mod lru;
 mod mem;
-mod net;
 mod player;
-mod shorts;
 mod thumbs;
 mod ui;
-mod youtube;
+
+// Core modules, reachable as `crate::config` etc. inside this crate.
+use yt_lite_core::{auth, config, db, feed, net, youtube};
 
 use std::sync::Arc;
 
@@ -28,12 +23,57 @@ use net::Http;
 use player::Player;
 use ui::feed_view::FeedView;
 
+actions!(
+    yt_lite,
+    [Quit, CloseWindow, Refresh, ToggleHideWatched, OpenConfigFolder]
+);
+
+/// Menu bar (macOS) and shortcuts. `secondary` is Cmd on macOS, Ctrl elsewhere.
+fn init_menus(cx: &mut App) {
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &CloseWindow, cx| {
+        if let Some(w) = cx.active_window() {
+            w.update(cx, |_, window, _| window.remove_window()).ok();
+        }
+    });
+    cx.bind_keys([
+        KeyBinding::new("secondary-q", Quit, None),
+        KeyBinding::new("secondary-w", CloseWindow, None),
+        KeyBinding::new("secondary-r", Refresh, Some("FeedView")),
+        KeyBinding::new("f5", Refresh, Some("FeedView")),
+        KeyBinding::new("secondary-shift-h", ToggleHideWatched, Some("FeedView")),
+        KeyBinding::new("secondary-,", OpenConfigFolder, Some("FeedView")),
+    ]);
+    cx.set_menus([
+        Menu::new("yt-lite").items([
+            MenuItem::action("Open Config Folder…", OpenConfigFolder),
+            MenuItem::separator(),
+            MenuItem::action("Quit yt-lite", Quit),
+        ]),
+        Menu::new("File").items([MenuItem::action("Close Window", CloseWindow)]),
+        Menu::new("View").items([
+            MenuItem::action("Refresh", Refresh),
+            MenuItem::action("Hide/Show Watched", ToggleHideWatched),
+        ]),
+    ]);
+    // Single-window app: closing it quits (macOS would otherwise keep running).
+    cx.on_window_closed(|cx, _| {
+        if cx.windows().is_empty() {
+            cx.quit();
+        }
+    })
+    .detach();
+}
+
 fn init_logging(paths: &Paths) {
     let mut builder = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,naga=warn,wgpu=warn"),
     );
-    // Release builds on Windows have no console; log to a file instead.
-    if cfg!(all(windows, not(debug_assertions))) {
+    // Windows release builds have no console, and a macOS .app launched from
+    // Finder has no visible stderr: log to a file instead.
+    let in_app_bundle = std::env::current_exe()
+        .is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"));
+    if cfg!(all(windows, not(debug_assertions))) || in_app_bundle {
         let _ = std::fs::create_dir_all(&paths.data_dir);
         if let Ok(file) = std::fs::File::create(paths.data_dir.join("yt-lite.log")) {
             builder.target(env_logger::Target::Pipe(Box::new(file)));
@@ -65,6 +105,7 @@ fn main() -> anyhow::Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             Theme::change(if dark { ThemeMode::Dark } else { ThemeMode::Light }, None, cx);
+            init_menus(cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1400.), px(900.)), cx)),
                 titlebar: Some(TitlebarOptions {

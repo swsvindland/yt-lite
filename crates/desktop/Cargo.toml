@@ -1,0 +1,31 @@
+[package]
+name = "yt-lite"
+description = "Lightweight native YouTube client (GPUI + mpv)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "yt-lite"
+path = "src/main.rs"
+
+[dependencies]
+yt-lite-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+chrono.workspace = true
+
+# UI: gpui-kit pins a matching GPUI snapshot (gpui-pre) and re-exports gpui + gpui-component.
+# Default features = component + lucide icon assets. No web view / JS runtime.
+gpui-kit = "0.7.1"
+# Runs blocking core calls off the UI thread (smol::unblock), awaited from GPUI tasks.
+smol = "2"
+futures = "0.3"
+open = "5.4"
+
+# Thumbnails: decode JPEG only, at display size. Version must match gpui-pre's `image`.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+env_logger = "0.11"
+memory-stats = "1.2"

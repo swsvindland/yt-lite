@@ -1,19 +1,18 @@
-//! Thumbnails: download once to a disk cache, decode at display size into
+//! Thumbnails: fetched via the core disk cache, decoded at display size into
 //! BGRA, and keep decoded images in a byte-capped LRU. Evicted images must also
 //! be dropped from GPUI's sprite atlas (see [`Thumbnails::finish`]).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use anyhow::{Context as _, Result};
 use gpui_kit::{RenderImage, SharedString};
 use image::{Frame, ImageFormat, imageops::FilterType};
 
-use crate::lru::WeightedLru;
-use crate::net::Http;
-use crate::youtube::thumbnail_url;
+use yt_lite_core::lru::WeightedLru;
+use yt_lite_core::net::Http;
+use yt_lite_core::thumbcache;
 
 /// A cap smaller than one screen of cards would evict visible thumbnails and
 /// reload them forever; 16 MB holds ~70 cards at 320x180.
@@ -99,26 +98,7 @@ fn image_bytes(img: &RenderImage) -> usize {
 
 /// Blocking: disk cache or network, then decode to at most `max_w`x`max_h`.
 pub fn load(http: &Http, dir: &Path, video_id: &str, max_w: u32, max_h: u32) -> Result<RenderImage> {
-    let path = dir.join(format!("{video_id}.jpg"));
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => {
-            // Bump mtime so disk pruning is least-recently-used.
-            if let Ok(f) = std::fs::File::options().append(true).open(&path) {
-                let _ = f.set_modified(SystemTime::now());
-            }
-            b
-        }
-        Err(_) => {
-            let b = http.get_bytes(&thumbnail_url(video_id))?;
-            std::fs::create_dir_all(dir)?;
-            // Write via temp file so a crash can't leave a truncated JPEG.
-            let tmp = path.with_extension("tmp");
-            std::fs::write(&tmp, &b)?;
-            std::fs::rename(&tmp, &path)?;
-            b
-        }
-    };
-    decode(&bytes, max_w, max_h)
+    decode(&thumbcache::fetch(http, dir, video_id)?, max_w, max_h)
 }
 
 pub fn decode(bytes: &[u8], max_w: u32, max_h: u32) -> Result<RenderImage> {
@@ -137,44 +117,9 @@ pub fn decode(bytes: &[u8], max_w: u32, max_h: u32) -> Result<RenderImage> {
     Ok(RenderImage::new(vec![Frame::new(rgba)]))
 }
 
-/// Deletes least-recently-used files until the directory is under `cap_bytes`.
-pub fn prune_disk(dir: &Path, cap_bytes: u64) -> Result<usize> {
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return Ok(0);
-    };
-    let files: Vec<(PathBuf, u64, SystemTime)> = read
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let meta = e.metadata().ok()?;
-            meta.is_file()
-                .then(|| (e.path(), meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)))
-        })
-        .collect();
-    let victims = select_for_deletion(files, cap_bytes);
-    for p in &victims {
-        let _ = std::fs::remove_file(p);
-    }
-    Ok(victims.len())
-}
-
-fn select_for_deletion(mut files: Vec<(PathBuf, u64, SystemTime)>, cap_bytes: u64) -> Vec<PathBuf> {
-    let mut total: u64 = files.iter().map(|f| f.1).sum();
-    files.sort_by_key(|f| f.2);
-    let mut out = Vec::new();
-    for (path, size, _) in files {
-        if total <= cap_bytes {
-            break;
-        }
-        total -= size;
-        out.push(path);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     fn jpeg(w: u32, h: u32) -> Vec<u8> {
         let img = image::RgbImage::from_fn(w, h, |x, _| image::Rgb([x as u8, 0, 255]));
@@ -249,19 +194,4 @@ mod tests {
         assert!(t.begin_load(&id));
     }
 
-    #[test]
-    fn disk_prune_removes_oldest_first() {
-        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
-        let files = vec![
-            (PathBuf::from("new"), 40, t0 + Duration::from_secs(30)),
-            (PathBuf::from("old"), 40, t0),
-            (PathBuf::from("mid"), 40, t0 + Duration::from_secs(10)),
-        ];
-        assert_eq!(select_for_deletion(files.clone(), 120), Vec::<PathBuf>::new());
-        assert_eq!(select_for_deletion(files.clone(), 80), vec![PathBuf::from("old")]);
-        assert_eq!(
-            select_for_deletion(files, 10),
-            vec![PathBuf::from("old"), PathBuf::from("mid"), PathBuf::from("new")]
-        );
-    }
 }

@@ -9060,24 +9060,36 @@ name = "yt-lite"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "env_logger",
+ "futures",
+ "gpui-kit",
+ "image",
+ "log",
+ "memory-stats",
+ "open",
+ "smol",
+ "yt-lite-core",
+]
+
+[[package]]
+name = "yt-lite-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "apple-native-keyring-store",
  "base64 0.23.1",
  "chrono",
  "directories",
- "env_logger",
- "futures",
  "getrandom 0.4.3",
- "gpui-kit",
- "image",
  "keyring",
  "log",
- "memory-stats",
  "open",
  "roxmltree 0.21.1",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "smol",
  "toml 1.1.6+spec-1.1.0",
  "ureq",
  "url",

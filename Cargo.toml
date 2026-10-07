@@ -1,0 +1,57 @@
+[package]
+name = "yt-lite"
+version = "0.1.0"
+edition = "2024"
+description = "Lightweight native YouTube subscriptions client (GPUI + mpv)"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# UI: gpui-kit pins a matching GPUI snapshot (gpui-pre) and re-exports gpui + gpui-component.
+# Default features = component + lucide icon assets. No web view / JS runtime.
+gpui-kit = "0.7.1"
+
+# Networking: blocking ureq on smol's blocking pool, awaited from GPUI tasks (no tokio).
+ureq = { version = "3.4", features = ["json"] }
+smol = "2"
+futures = "0.3"
+url = "2.5"
+
+# Storage
+rusqlite = { version = "0.40", features = ["bundled"] }
+keyring = "4.2"
+directories = "6"
+
+# Data formats
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1.1"
+roxmltree = "0.21"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Thumbnails: decode JPEG only, at display size. Version must match gpui-pre's `image`.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+# OAuth (PKCE)
+sha2 = "0.11"
+base64 = "0.23"
+getrandom = "0.4"
+open = "5.4"
+
+# Misc
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+memory-stats = "1.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+# GPUI is very slow unoptimized; optimize dependencies even in dev.
+[profile.dev.package."*"]
+opt-level = 2

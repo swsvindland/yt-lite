@@ -132,7 +132,7 @@ fn classify(s: &Services, signed_in: bool, stats: &mut RefreshStats, progress: P
         let done = AtomicUsize::new(0);
         let results = parallel_map(&to_probe, PROBE_CONCURRENCY, |id| {
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % 10 == 0 || n == total {
+            if n.is_multiple_of(10) || n == total {
                 progress(format!("Checking for Shorts {n}/{total}"));
             }
             s.http.probe_short(id)

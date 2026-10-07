@@ -15,6 +15,10 @@ use crate::lru::WeightedLru;
 use crate::net::Http;
 use crate::youtube::thumbnail_url;
 
+/// A cap smaller than one screen of cards would evict visible thumbnails and
+/// reload them forever; 16 MB holds ~70 cards at 320x180.
+pub const MIN_MEMORY_CAP: usize = 16 * 1024 * 1024;
+
 pub struct Thumbnails {
     lru: WeightedLru<SharedString, Arc<RenderImage>>,
     pending: HashSet<SharedString>,
@@ -25,7 +29,7 @@ pub struct Thumbnails {
 impl Thumbnails {
     pub fn new(dir: PathBuf, memory_cap_bytes: usize) -> Self {
         Self {
-            lru: WeightedLru::new(memory_cap_bytes),
+            lru: WeightedLru::new(memory_cap_bytes.max(MIN_MEMORY_CAP)),
             pending: HashSet::new(),
             failed: HashSet::new(),
             dir,
@@ -64,6 +68,12 @@ impl Thumbnails {
                 Vec::new()
             }
         }
+    }
+
+    /// Drops every decoded image (e.g. when idle). The caller must release
+    /// them from the GPU atlas. In-flight loads still land afterwards.
+    pub fn clear(&mut self) -> Vec<Arc<RenderImage>> {
+        self.lru.drain()
     }
 
     /// Lets failed thumbnails retry (called on refresh).
@@ -121,7 +131,7 @@ pub fn decode(bytes: &[u8], max_w: u32, max_h: u32) -> Result<RenderImage> {
     };
     let mut rgba = img.into_rgba8();
     // GPUI expects BGRA.
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     Ok(RenderImage::new(vec![Frame::new(rgba)]))
@@ -194,13 +204,22 @@ mod tests {
 
     #[test]
     fn memory_cache_respects_cap_and_reports_evictions() {
-        let one = 320 * 180 * 4;
+        let one = MIN_MEMORY_CAP / 2;
         let mut t = Thumbnails::new(PathBuf::new(), one * 2);
+        let decode = |_: &[u8], _, _| -> Result<RenderImage> {
+            // A synthetic image weighing exactly `one` bytes.
+            let side = ((one / 4) as f64).sqrt() as u32;
+            Ok(RenderImage::new(vec![Frame::new(image::RgbaImage::new(side, side))]))
+        };
+        let one = {
+            let img = decode(&[], 0, 0).unwrap();
+            image_bytes(&img)
+        };
         for id in ["a", "b", "c"] {
             let id = SharedString::from(id);
             assert!(t.begin_load(&id));
             assert!(!t.begin_load(&id), "already pending");
-            let evicted = t.finish(id, decode(&jpeg(320, 180), 320, 180));
+            let evicted = t.finish(id, decode(&[], 0, 0));
             assert!(t.memory_bytes() <= one * 2);
             if t.len() == 2 && evicted.len() == 1 {
                 // third insert evicted "a"
@@ -209,6 +228,14 @@ mod tests {
         }
         assert_eq!(t.len(), 2);
         assert!(t.get(&"c".into()).is_some());
+        assert_eq!(t.clear().len(), 2);
+        assert_eq!(t.memory_bytes(), 0);
+    }
+
+    #[test]
+    fn cap_has_floor() {
+        let t = Thumbnails::new(PathBuf::new(), 1);
+        assert_eq!(t.lru.cap(), MIN_MEMORY_CAP);
     }
 
     #[test]

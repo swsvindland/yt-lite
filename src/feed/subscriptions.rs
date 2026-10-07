@@ -88,7 +88,7 @@ impl FeedSource for SubscriptionsSource {
                     api.recent_uploads(&ch.channel_id, &ch.title)
                 });
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % 10 == 0 || n == total {
+            if n.is_multiple_of(10) || n == total {
                 progress(format!("Fetching channel feeds {n}/{total}"));
             }
             r.map_err(|e| (ch.channel_id.clone(), e))

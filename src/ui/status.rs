@@ -29,7 +29,7 @@ impl MemoryIndicator {
                     break;
                 }
                 // Also log every 5 minutes for headless verification.
-                if n % 150 == 0 {
+                if n.is_multiple_of(150) {
                     mem::log_now("periodic");
                 }
                 n = n.wrapping_add(1);

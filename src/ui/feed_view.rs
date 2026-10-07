@@ -33,6 +33,8 @@ const THUMB_H: f32 = 180.;
 const GAP: f32 = 16.;
 const SIDE_PAD: f32 = 16.;
 const MAX_PARALLEL_THUMBS: usize = 8;
+/// Decoded thumbnails are dropped after the window has been inactive this long.
+const IDLE_TRIM_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 struct Card {
     id: SharedString,
@@ -72,8 +74,11 @@ pub struct FeedView {
     signed_in: bool,
     hide_watched: bool,
     loaded_once: bool,
+    scroll_test_started: bool,
     scroll: UniformListScrollHandle,
     memory: Option<Entity<MemoryIndicator>>,
+    idle_trim: Option<Task<()>>,
+    _activation: Subscription,
     _timer: Task<()>,
 }
 
@@ -100,6 +105,16 @@ impl FeedView {
             .ui
             .show_memory
             .then(|| cx.new(MemoryIndicator::new));
+        let activation = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.idle_trim = None;
+            } else {
+                this.idle_trim = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(IDLE_TRIM_AFTER).await;
+                    this.update(cx, |v, cx| v.trim_thumbnails(cx)).ok();
+                }));
+            }
+        });
         let thumbs = Thumbnails::new(
             paths.thumbs_dir(),
             services.config.cache.thumb_memory_mb * 1024 * 1024,
@@ -118,8 +133,11 @@ impl FeedView {
             refreshing: false,
             signing_in: false,
             loaded_once: false,
+            scroll_test_started: false,
             scroll: UniformListScrollHandle::new(),
             memory,
+            idle_trim: None,
+            _activation: activation,
             _timer: timer,
         };
         this.startup(window, cx);
@@ -159,6 +177,8 @@ impl FeedView {
                 v.reload(cx);
                 if stale {
                     v.refresh(window, cx);
+                } else {
+                    v.maybe_scroll_test(window, cx);
                 }
             })
             .ok();
@@ -258,8 +278,52 @@ impl FeedView {
                     }
                 }
                 v.reload(cx);
+                v.maybe_scroll_test(window, cx);
             })
             .ok();
+        })
+        .detach();
+    }
+
+    /// `YT_LITE_SCROLL_TEST=1`: after the first refresh, scroll through the
+    /// whole grid twice and log memory, to verify the memory budget with a
+    /// full thumbnail cache.
+    fn maybe_scroll_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.scroll_test_started || std::env::var_os("YT_LITE_SCROLL_TEST").is_none() {
+            return;
+        }
+        self.scroll_test_started = true;
+        let scroll = self.scroll.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            let wait = |ms| executor.timer(std::time::Duration::from_millis(ms));
+            wait(2000).await;
+            crate::mem::log_now("scroll test start");
+            for pass in 1..=2 {
+                let Ok(rows) =
+                    this.update_in(cx, |v, window, _| v.cards.len().div_ceil(v.columns(window)))
+                else {
+                    return;
+                };
+                for row in 0..rows {
+                    scroll.scroll_to_item(row, ScrollStrategy::Top);
+                    this.update(cx, |_, cx| cx.notify()).ok();
+                    wait(250).await;
+                }
+                scroll.scroll_to_item(0, ScrollStrategy::Top);
+                this.update(cx, |_, cx| cx.notify()).ok();
+                wait(2000).await;
+                let stats = this
+                    .read_with(cx, |v, _| (v.cards.len(), v.thumbs.len(), v.thumbs.memory_bytes()))
+                    .unwrap_or_default();
+                log::info!(
+                    "scroll test pass {pass}: {rows} rows, {} cards, {} thumbs cached ({:.1} MB)",
+                    stats.0,
+                    stats.1,
+                    crate::mem::mb(stats.2)
+                );
+                crate::mem::log_now(&format!("scroll test pass {pass}"));
+            }
         })
         .detach();
     }
@@ -372,6 +436,26 @@ impl FeedView {
                 cx.notify();
             })
             .ok();
+        })
+        .detach();
+    }
+
+    /// Releases all decoded thumbnails (CPU buffers and GPU atlas tiles).
+    /// They reload from the disk cache when next shown.
+    fn trim_thumbnails(&mut self, cx: &mut Context<Self>) {
+        let images = self.thumbs.clear();
+        let n = images.len();
+        for img in images {
+            cx.drop_image(img, None);
+        }
+        log::info!("idle: released {n} thumbnails");
+        cx.notify();
+        // Measure after the allocator has had a moment.
+        cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(2))
+                .await;
+            crate::mem::log_now("after idle trim");
         })
         .detach();
     }

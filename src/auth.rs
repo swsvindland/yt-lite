@@ -90,11 +90,10 @@ impl Auth {
 
     /// Returns a valid access token, refreshing it if needed. Blocking.
     pub fn access_token(&self) -> Result<String> {
-        if let Some((tok, expires)) = self.access.lock().unwrap().as_ref() {
-            if Instant::now() + Duration::from_secs(60) < *expires {
+        if let Some((tok, expires)) = self.access.lock().unwrap().as_ref()
+            && Instant::now() + Duration::from_secs(60) < *expires {
                 return Ok(tok.clone());
             }
-        }
         let refresh = Self::refresh_token()?.ok_or(NotSignedIn)?;
         let resp: TokenResponse = self
             .http

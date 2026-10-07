@@ -100,6 +100,13 @@ impl<K: Hash + Eq + Clone, V> WeightedLru<K, V> {
         Some(entry.value)
     }
 
+    /// Removes everything, returning the values.
+    pub fn drain(&mut self) -> Vec<V> {
+        self.order.clear();
+        self.weight = 0;
+        self.entries.drain().map(|(_, e)| e.value).collect()
+    }
+
     fn pop_lru(&mut self) -> Option<V> {
         let (_, key) = self.order.pop_first()?;
         let entry = self.entries.remove(&key)?;
@@ -175,6 +182,18 @@ mod tests {
         let sum: usize = lru.entries.values().map(|e| e.weight).sum();
         assert_eq!(sum, lru.weight());
         assert_eq!(lru.order.len(), lru.entries.len());
+    }
+
+    #[test]
+    fn drain_empties_cache() {
+        let mut lru = WeightedLru::new(100);
+        lru.insert(1, "a", 10);
+        lru.insert(2, "b", 10);
+        let mut all = lru.drain();
+        all.sort();
+        assert_eq!(all, vec!["a", "b"]);
+        assert_eq!((lru.len(), lru.weight()), (0, 0));
+        assert!(lru.insert(3, "c", 100).is_empty());
     }
 
     #[test]

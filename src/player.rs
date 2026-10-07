@@ -27,16 +27,18 @@ impl Missing {
     pub fn install_hint(&self) -> &'static str {
         match self {
             Missing::Mpv => {
-                "mpv was not found. Install it with `winget install mpv` (or `scoop install mpv`), \
+                "mpv was not found. Install it with `winget install shinchiro.mpv` \
+                 (or `scoop bucket add extras; scoop install extras/mpv`), \
                  or set player.mpv_path in config.toml."
             }
             Missing::YtDlp => {
-                "yt-dlp was not found. Install it with `winget install yt-dlp` (or `scoop install yt-dlp`), \
-                 or set player.ytdlp_path in config.toml."
+                "yt-dlp was not found. Install it with `winget install yt-dlp.yt-dlp` \
+                 (or `scoop install yt-dlp`), or set player.ytdlp_path in config.toml."
             }
             Missing::Both => {
-                "mpv and yt-dlp were not found. Install them with `winget install mpv yt-dlp` \
-                 (or `scoop install mpv yt-dlp`), or set player.mpv_path / player.ytdlp_path in config.toml."
+                "mpv and yt-dlp were not found. Install them with \
+                 `winget install shinchiro.mpv` and `winget install yt-dlp.yt-dlp`, \
+                 or set player.mpv_path / player.ytdlp_path in config.toml."
             }
         }
     }
@@ -161,8 +163,14 @@ pub fn find_executable(name_or_path: &str) -> Option<PathBuf> {
 fn with_exe_variants(p: &Path) -> Vec<PathBuf> {
     let mut out = vec![p.to_path_buf()];
     if cfg!(windows) && p.extension().is_none() {
-        let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.COM;.BAT;.CMD".into());
-        for ext in exts.split(';').filter(|e| !e.is_empty()) {
+        // `.exe` first: mpv ships both mpv.exe (GUI) and mpv.com (console
+        // wrapper), and the default PATHEXT lists .COM before .EXE.
+        let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+        let exts = std::iter::once(".exe").chain(
+            exts.split(';')
+                .filter(|e| !e.is_empty() && !e.eq_ignore_ascii_case(".exe")),
+        );
+        for ext in exts {
             let mut s = p.as_os_str().to_owned();
             s.push(ext.to_ascii_lowercase());
             out.push(PathBuf::from(s));

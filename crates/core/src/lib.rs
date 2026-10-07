@@ -8,6 +8,7 @@ pub mod db;
 pub mod feed;
 pub mod lru;
 pub mod net;
+pub mod resolve;
 pub mod shorts;
 pub mod thumbcache;
 pub mod youtube;

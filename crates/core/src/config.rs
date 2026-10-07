@@ -44,6 +44,11 @@ pub struct PlayerConfig {
     pub sponsorblock_script: String,
     /// Extra arguments appended to the mpv command line.
     pub extra_args: Vec<String>,
+    /// `native` (resolve streams in-process, fall back to yt-dlp on failure)
+    /// or `yt-dlp` (always let mpv use yt-dlp).
+    pub resolver: String,
+    /// Video codec preference for the native resolver, best first.
+    pub codecs: Vec<String>,
 }
 
 impl Default for PlayerConfig {
@@ -55,6 +60,8 @@ impl Default for PlayerConfig {
             sponsorblock: false,
             sponsorblock_script: String::new(),
             extra_args: Vec::new(),
+            resolver: "native".into(),
+            codecs: vec!["avc1".into(), "vp9".into(), "av01".into()],
         }
     }
 }
@@ -224,6 +231,8 @@ max_height = 1080
 sponsorblock = false
 # sponsorblock_script = 'C:\path\to\sponsorblock.lua'
 extra_args = []
+resolver = "native"       # "native" (falls back to yt-dlp if it fails) or "yt-dlp"
+codecs = ["avc1", "vp9", "av01"]   # native resolver preference at equal quality
 
 [feed]
 refresh_interval_minutes = 15   # minimum 15
@@ -251,6 +260,7 @@ mod tests {
     fn default_file_parses_to_defaults() {
         let c = Config::parse(DEFAULT_CONFIG).unwrap();
         assert_eq!(c.player.max_height, 1080);
+        assert_eq!(c.player.resolver, "native");
         assert_eq!(c.feed.refresh_interval_minutes, 15);
         assert_eq!(c.cache.thumb_memory_mb, 50);
         assert!(!c.has_google_client());

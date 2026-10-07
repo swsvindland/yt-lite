@@ -24,9 +24,9 @@ use crate::config::Paths;
 use crate::db::{FeedQuery, VideoRow};
 use crate::feed::FeedSource;
 use crate::feed::pipeline::{self, Services};
-use crate::player::Player;
+use crate::player::{Method, Player};
 use crate::thumbs::{self, Thumbnails};
-use crate::youtube::{duration::format_clock, watch_url};
+use crate::youtube::duration::format_clock;
 use crate::{OpenConfigFolder, Refresh, ToggleHideWatched};
 
 const CARD_W: f32 = 320.;
@@ -387,13 +387,37 @@ impl FeedView {
     fn play(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(card) = self.cards.get(ix) else { return };
         let (id, title) = (card.id.clone(), card.title.clone());
-        match self.player.play(&watch_url(&id), &title) {
-            Ok(()) => self.set_watched(ix, true, cx),
-            Err(e) => window.push_notification(
-                Notification::error(e.to_string()).title("Can't play video"),
-                cx,
-            ),
-        }
+        let player = self.player.clone();
+        self.status = format!("Opening “{title}”…").into();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let video_id = id.to_string();
+            let result = smol::unblock(move || player.play(&video_id, &title)).await;
+            this.update_in(cx, |v, window, cx| {
+                match result {
+                    Ok(method) => {
+                        v.status = match method {
+                            Method::Native => "Playing in mpv".into(),
+                            Method::YtDlp => "Playing in mpv (via yt-dlp)".into(),
+                        };
+                        // The list may have been reloaded meanwhile; find by id.
+                        if let Some(ix) = v.cards.iter().position(|c| c.id == id) {
+                            v.set_watched(ix, true, cx);
+                        }
+                    }
+                    Err(e) => {
+                        v.status = "".into();
+                        window.push_notification(
+                            Notification::error(format!("{e:#}")).title("Can't play video"),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn set_watched(&mut self, ix: usize, watched: bool, cx: &mut Context<Self>) {

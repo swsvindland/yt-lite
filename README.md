@@ -2,16 +2,19 @@
 
 A small native desktop client for your YouTube subscriptions, built with Rust and
 [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + gpui-component). Videos play
-in [mpv](https://mpv.io) through [yt-dlp](https://github.com/yt-dlp/yt-dlp). The app never
-loads YouTube's web player or a web view.
+in [mpv](https://mpv.io): stream URLs are resolved natively in Rust (~0.2 s), with
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) as an automatic fallback. The app never loads
+YouTube's web player or a web view.
 
 - Chronological subscriptions grid: thumbnail, title, channel, duration, age
 - **No Shorts, anywhere.** Filtered centrally for every feed source; the filter fails closed
 - Click a video to open it in mpv (1080p max by default); watched state is kept locally
+- Native stream resolver (a Rust port of the relevant part of yt-dlp), yt-dlp as fallback
 - Optional SponsorBlock via the mpv script
 - Low memory: virtualized grid, byte-capped thumbnail cache, idle trimming, and a live RSS readout
 
-Primary target is Windows 11; it also runs on macOS (where it was developed and tested).
+Primary target is Windows 11; macOS is supported too (menu bar, ⌘ shortcuts, `.app` bundle).
+The UI-independent core also builds for iOS; see [docs/ios.md](docs/ios.md).
 
 ---
 
@@ -32,7 +35,7 @@ cargo build --release
 Release builds run without a console window and log to `%LOCALAPPDATA%\yt-lite\data\yt-lite.log`.
 Debug builds (`cargo run`) log to the console.
 
-### 2. mpv and yt-dlp
+### 2. mpv (required) and yt-dlp (fallback)
 
 ```powershell
 winget install shinchiro.mpv
@@ -48,8 +51,25 @@ scoop install extras/mpv yt-dlp
 
 The app finds them on `PATH`, in scoop's `shims` folder, and in winget's `Links` folder. If it
 can't, clicking a video shows an error with install instructions; set `player.mpv_path` /
-`player.ytdlp_path` in the config to full paths. Keep yt-dlp up to date (`yt-dlp -U` or
-`winget upgrade yt-dlp.yt-dlp`): YouTube changes often break old versions.
+`player.ytdlp_path` in the config to full paths. yt-dlp is only used when the native resolver
+fails, but keep it installed and up to date (`yt-dlp -U` or `winget upgrade yt-dlp.yt-dlp`):
+YouTube changes often break old versions of either.
+
+## Setup (macOS)
+
+```sh
+brew install mpv yt-dlp
+scripts/bundle-macos.sh --install     # builds target/release/yt-lite.app, copies to /Applications
+```
+
+Any Xcode Command Line Tools install is enough to build. Config lives in
+`~/Library/Application Support/yt-lite/config.toml` (⌘, opens the folder), the refresh token in
+the login Keychain. The bundle is ad-hoc signed, so after each rebuild macOS asks once whether
+yt-lite may use its Keychain item ("Always Allow"). Logs go to
+`~/Library/Application Support/yt-lite/data/yt-lite.log` when launched from the bundle.
+
+Shortcuts: ⌘R refresh, ⇧⌘H hide/show watched, ⌘, config folder, ⌘W / ⌘Q quit (Ctrl on Windows;
+F5 also refreshes).
 
 ### 3. Google Cloud OAuth client (for your subscription list)
 
@@ -97,6 +117,8 @@ max_height = 1080         # yt-dlp format: bestvideo[height<=?1080]+bestaudio
 sponsorblock = false      # load the SponsorBlock mpv script if present
 # sponsorblock_script = 'C:\Tools\mpv\sponsorblock.lua'
 extra_args = []           # appended to the mpv command line, e.g. ["--volume=60"]
+resolver = "native"       # "native" (falls back to yt-dlp if it fails) or "yt-dlp"
+codecs = ["avc1", "vp9", "av01"]   # native resolver preference at equal quality
 
 [feed]
 refresh_interval_minutes = 15   # automatic refresh; values below 15 are raised to 15
@@ -169,9 +191,42 @@ A video is shown only after it has a cached **not-a-Short** verdict:
 Videos with no duration yet stay hidden until enrichment fills one in. Without sign-in, the
 probe alone decides. At most 400 probes run per refresh.
 
+### Native stream resolver (`crates/core/src/resolve`)
+
+A port of the part of yt-dlp's YouTube extractor that matters here (yt-dlp is public domain):
+
+1. One InnerTube `POST /youtubei/v1/player` request as the **`visionos`** client. As of
+   2026-10 it is the only client yt-dlp uses whose stream URLs need neither a JS runtime
+   (signature/`n` deciphering) nor a PO token. `android_vr` started getting 403s in 2026-08.
+2. `visitorData` (a logged-out session id) is required; without it YouTube answers
+   `LOGIN_REQUIRED` "confirm you're not a bot". That response carries a fresh one, so the
+   resolver retries once with it and caches it in SQLite.
+3. Format selection: highest quality tier ≤ `max_height` (from YouTube's `qualityLabel`, so
+   2:1 and vertical videos are handled), then fps, then `codecs` order; audio is the
+   original-language track (auto-dubbed videos list several), non-DRC, best bitrate. Formats
+   with a signature cipher, an `n` parameter, DRM or OTF/live fragments are never used.
+4. mpv gets the two URLs directly (`--audio-file`), with `--ytdl=no`. Two details:
+   - googlevideo **throttles open-ended requests** to about real time (measured: 150 KB/s for a
+     4 Mbps stream) but serves bounded range requests at full speed (40 MB/s). mpv is told to
+     fetch in 10 MiB chunks (`--stream-lavf-o-append=request_size=10485760`), as mpv's own
+     ytdl_hook does.
+   - A `Referer: https://www.youtube.com/watch?v=<id>` header lets the SponsorBlock script
+     find the video id.
+5. Live streams use the HLS manifest.
+
+If anything fails (YouTube changed something, age-restricted, made-for-kids), playback falls
+back to mpv + yt-dlp automatically. To debug the native path:
+
+```sh
+cargo run -p yt-lite-core --example resolve -- <video id or URL> [max_height]
+```
+
+When YouTube breaks it, the fix is usually updating the `VISIONOS` constants in
+`crates/core/src/resolve/innertube.rs` from yt-dlp's `INNERTUBE_CLIENTS`.
+
 ### Feed sources (Phase 2 ready)
 
-`src/feed/mod.rs` defines the `FeedSource` trait. A source only *discovers* videos and returns
+`crates/core/src/feed/mod.rs` defines the `FeedSource` trait. A source only *discovers* videos and returns
 them with a retention policy. `feed::pipeline::refresh` then caches, enriches, and
 Shorts-filters the output of **every** source, so a new source can't bypass the filter. The
 planned InnerTube home/recommended feed is another `FeedSource` (`FeedKind::Home`, using
@@ -230,27 +285,35 @@ The output includes `memory [scroll test pass 2]`. If a full cache goes over bud
 ## Development
 
 ```sh
-cargo test          # Shorts logic, RSS parsing (saved fixtures), LRU eviction, DB, config, …
+cargo test          # Shorts logic, RSS + player-response parsing (saved fixtures), format
+                    # selection, LRU eviction, DB, config, mpv args, …
 cargo run           # debug build (dependencies are optimized even in dev)
 ```
 
-Module layout:
+Workspace layout:
 
 ```
-src/
-  main.rs              bootstrap, logging, window
-  config.rs            config.toml + platform dirs
-  net.rs               ureq client, Shorts probe, bounded parallel map
-  auth.rs              OAuth loopback + PKCE, refresh token in the OS keyring
-  db.rs                SQLite cache
-  shorts.rs            pure Shorts classification
-  player.rs            mpv/yt-dlp detection and launch
-  lru.rs, thumbs.rs    byte-capped LRU, thumbnail load/decode/disk cache
-  mem.rs               RSS readout
-  youtube/{api,rss,duration}.rs
-  feed/{mod,pipeline,subscriptions}.rs
-  ui/{feed_view,status}.rs
-tests/fixtures/        real RSS feeds captured 2026-10-07
+crates/core/         yt-lite-core: no UI; also builds for iOS (aarch64-apple-ios)
+  src/config.rs        config.toml + platform dirs
+  src/net.rs           ureq client, Shorts probe, bounded parallel map
+  src/auth.rs          OAuth + PKCE (loopback flow behind the `loopback-auth` feature)
+  src/db.rs            SQLite cache
+  src/shorts.rs        pure Shorts classification
+  src/resolve/         native stream resolver (InnerTube player + format selection)
+  src/thumbcache.rs    thumbnail disk cache
+  src/lru.rs           byte-capped LRU
+  src/youtube/         Data API, RSS, durations, URL parsing
+  src/feed/            FeedSource trait, pipeline, subscriptions source
+  examples/resolve.rs  CLI for the native resolver
+  tests/fixtures/      RSS feeds and player responses captured 2026-10-07 (URLs scrubbed)
+crates/desktop/      yt-lite: GPUI app
+  src/main.rs          bootstrap, menus, shortcuts, logging, window
+  src/player.rs        mpv launch (native URLs or yt-dlp)
+  src/thumbs.rs        decode to display size + in-memory LRU
+  src/mem.rs           RSS readout
+  src/ui/              feed grid, status bar
+scripts/bundle-macos.sh
+docs/ios.md          plan for a SwiftUI iPhone app on the same core
 ```
 
 ### Phase 2 (designed for, not built)
@@ -258,6 +321,7 @@ tests/fixtures/        real RSS feeds captured 2026-10-07
 - **Home/recommended feed** via InnerTube: implement `FeedSource` for `FeedKind::Home` and add
   a source switcher to the toolbar.
 - **Embedded libmpv** inside the GPUI window.
+- **iPhone app** in SwiftUI on `yt-lite-core`, see [docs/ios.md](docs/ios.md).
 - **Search.**
 
 Non-goals: comments, uploading, live chat, notifications, Shorts, multiple accounts, mobile.

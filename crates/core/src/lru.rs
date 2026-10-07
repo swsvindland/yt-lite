@@ -37,6 +37,10 @@ impl<K: Hash + Eq + Clone, V> WeightedLru<K, V> {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn weight(&self) -> usize {
         self.weight
     }

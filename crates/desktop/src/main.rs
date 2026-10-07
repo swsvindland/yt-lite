@@ -20,6 +20,8 @@ use db::Db;
 use feed::pipeline::Services;
 use feed::subscriptions::SubscriptionsSource;
 use net::Http;
+use yt_lite_core::resolve::StreamResolver;
+use yt_lite_core::resolve::innertube::InnertubeResolver;
 use player::Player;
 use ui::feed_view::FeedView;
 
@@ -90,7 +92,9 @@ fn main() -> anyhow::Result<()> {
 
     let http = Http::new();
     let db = Db::open(&paths.db_file()).context("opening cache database")?;
-    let player = Player::detect(&config.player, &paths);
+    let native: Option<Arc<dyn StreamResolver>> = (config.player.resolver != "yt-dlp")
+        .then(|| Arc::new(InnertubeResolver::new(http.clone(), Some(db.clone()))) as _);
+    let player = Player::detect(&config.player, &paths, native);
     let dark = config.ui.dark;
     let services = Arc::new(Services {
         auth: Auth::new(config.google.clone(), http.clone()),

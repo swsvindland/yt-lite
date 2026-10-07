@@ -28,6 +28,12 @@ pub struct Http {
     agent: Agent,
 }
 
+impl Default for Http {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Http {
     pub fn new() -> Self {
         let agent: Agent = Agent::config_builder()
@@ -86,6 +92,26 @@ impl Http {
             return Err(ApiError { status, body }.into());
         }
         Ok(resp.body_mut().read_json()?)
+    }
+
+    /// POST a JSON body with extra headers and decode a JSON response.
+    pub fn post_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &impl serde::Serialize,
+    ) -> Result<T> {
+        let mut req = self.agent.post(url);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let mut resp = req.send_json(body)?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            let body = resp.body_mut().read_to_string().unwrap_or_default();
+            return Err(ApiError { status, body }.into());
+        }
+        Ok(resp.body_mut().with_config().limit(16 * 1024 * 1024).read_json()?)
     }
 
     /// Requests `youtube.com/shorts/<id>` without following redirects. A Short

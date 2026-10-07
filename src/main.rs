@@ -1,74 +1,89 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod auth;
 mod config;
+mod db;
+mod feed;
 mod lru;
+mod mem;
+mod net;
 mod player;
 mod shorts;
+mod thumbs;
+mod ui;
+mod youtube;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, WindowExt as _, h_flex, notification::Notification, v_flex};
+use std::sync::Arc;
+
+use anyhow::Context as _;
+use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::*;
 
+use auth::Auth;
 use config::{Config, Paths};
+use db::Db;
+use feed::pipeline::Services;
+use feed::subscriptions::SubscriptionsSource;
+use net::Http;
 use player::Player;
+use ui::feed_view::FeedView;
 
-const DEMO: &[(&str, &str)] = &[
-    ("3iRUwVzRDZQ", "Xiaomi 18 Fold: How Does This Happen?"),
-    ("e1q-TuHdc4Y", "Dear YouTube!"),
-    ("dQw4w9WgXcQ", "Rick Astley - Never Gonna Give You Up"),
-];
-
-struct DemoView {
-    player: Player,
-}
-
-impl DemoView {
-    fn play(&mut self, id: &str, title: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let url = format!("https://www.youtube.com/watch?v={id}");
-        if let Err(e) = self.player.play(&url, title) {
-            window.push_notification(Notification::error(e.to_string()), cx);
+fn init_logging(paths: &Paths) {
+    let mut builder = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,naga=warn,wgpu=warn"),
+    );
+    // Release builds on Windows have no console; log to a file instead.
+    if cfg!(all(windows, not(debug_assertions))) {
+        let _ = std::fs::create_dir_all(&paths.data_dir);
+        if let Ok(file) = std::fs::File::create(paths.data_dir.join("yt-lite.log")) {
+            builder.target(env_logger::Target::Pipe(Box::new(file)));
         }
     }
-}
-
-impl Render for DemoView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = DEMO.iter().map(|&(id, title)| {
-            h_flex()
-                .gap_3()
-                .p_2()
-                .child(
-                    Button::new(SharedString::from(id))
-                        .primary()
-                        .label("Play")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.play(id, title, window, cx)
-                        })),
-                )
-                .child(title)
-        });
-        v_flex()
-            .size_full()
-            .p_4()
-            .gap_2()
-            .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
-            .children(rows)
-    }
+    builder.init();
 }
 
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let paths = Paths::resolve()?;
+    init_logging(&paths);
     let config = Config::load_or_init(&paths.config_file)?;
+    log::info!("config: {}", paths.config_file.display());
+
+    let http = Http::new();
+    let db = Db::open(&paths.db_file()).context("opening cache database")?;
     let player = Player::detect(&config.player, &paths);
+    let dark = config.ui.dark;
+    let services = Arc::new(Services {
+        auth: Auth::new(config.google.clone(), http.clone()),
+        http,
+        db,
+        config,
+    });
+    mem::log_now("startup");
 
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
-            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-                cx.new(|_| DemoView { player })
+            Theme::change(if dark { ThemeMode::Dark } else { ThemeMode::Light }, None, cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(1400.), px(900.)), cx)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("yt-lite".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| {
+                    FeedView::new(
+                        services,
+                        paths,
+                        player,
+                        Arc::new(SubscriptionsSource),
+                        window,
+                        cx,
+                    )
+                })
             })
             .expect("failed to open window");
             cx.activate(true);

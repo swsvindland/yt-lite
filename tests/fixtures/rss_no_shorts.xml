@@ -1,0 +1,488 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCsBjURrPoezykLs9EqgamOA"/>
+ <id>yt:channel:sBjURrPoezykLs9EqgamOA</id>
+ <yt:channelId>sBjURrPoezykLs9EqgamOA</yt:channelId>
+ <title>Fireship</title>
+ <link rel="alternate" href="https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA"/>
+ <author>
+  <name>Fireship</name>
+  <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+ </author>
+ <published>2017-04-07T18:17:23+00:00</published>
+ <entry>
+  <id>yt:video:_5p1_TNSWqQ</id>
+  <yt:videoId>_5p1_TNSWqQ</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>PewDiePie is setting AI free... and OpenAI is furious</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=_5p1_TNSWqQ"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-10-05T20:34:44+00:00</published>
+  <updated>2026-10-06T19:13:38+00:00</updated>
+  <media:group>
+   <media:title>PewDiePie is setting AI free... and OpenAI is furious</media:title>
+   <media:content url="https://www.youtube.com/v/_5p1_TNSWqQ?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i4.ytimg.com/vi/_5p1_TNSWqQ/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Namespace is actually the fastest way to run your GitHub Actions (and more). Try it for free - https://namespace.so/github-actions
+
+PewDiePie is building Ajax, an uncensored AI model he trained at home after OpenAI banned him twice for distillation. Let's dive in.
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="26417" average="5.00" min="1" max="5"/>
+    <media:statistics views="1332591"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:No-JPdFvYWU</id>
+  <yt:videoId>No-JPdFvYWU</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>The one OpenAI announcement that can actually make you money...</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=No-JPdFvYWU"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-10-01T19:34:14+00:00</published>
+  <updated>2026-10-06T00:54:51+00:00</updated>
+  <media:group>
+   <media:title>The one OpenAI announcement that can actually make you money...</media:title>
+   <media:content url="https://www.youtube.com/v/No-JPdFvYWU?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i3.ytimg.com/vi/No-JPdFvYWU/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Try the faster, open-weight version of Jev at https://fastino.ai/. Use code: FIRESHIPFIVE to get free credits.
+
+In this video we'll cover everything you missed at OpenAI Dev Day 2026. Let's dive in.
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="20246" average="5.00" min="1" max="5"/>
+    <media:statistics views="1666202"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:I_KVMFrUtPk</id>
+  <yt:videoId>I_KVMFrUtPk</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>Did a 50 year old military secret just solve agent prompt injection?</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=I_KVMFrUtPk"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-30T17:16:43+00:00</published>
+  <updated>2026-10-04T19:31:05+00:00</updated>
+  <media:group>
+   <media:title>Did a 50 year old military secret just solve agent prompt injection?</media:title>
+   <media:content url="https://www.youtube.com/v/I_KVMFrUtPk?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i2.ytimg.com/vi/I_KVMFrUtPk/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Check out the OpenAPPA repo: https://github.com/archestra-ai/OpenAPPA
+
+A new open source project claims to have fixed the rogue agent problem. Let's dive in. 
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="15326" average="5.00" min="1" max="5"/>
+    <media:statistics views="856283"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:OuNKBjuV7A4</id>
+  <yt:videoId>OuNKBjuV7A4</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>DHH has gone completely off the rails...</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=OuNKBjuV7A4"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-28T19:27:59+00:00</published>
+  <updated>2026-09-30T05:13:19+00:00</updated>
+  <media:group>
+   <media:title>DHH has gone completely off the rails...</media:title>
+   <media:content url="https://www.youtube.com/v/OuNKBjuV7A4?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i4.ytimg.com/vi/OuNKBjuV7A4/hqdefault.jpg" width="480" height="360"/>
+   <media:description>CodeRabbit Triage prioritizes all your team's pull requests for you. Try it free: https://coderabbit.link/fireship-014
+
+DHH told 1,200 Rails developers that writing code by hand is over... so let's find out which programming skills are actually still worth having.
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="33684" average="5.00" min="1" max="5"/>
+    <media:statistics views="2154444"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:c1rPlzxSZ8E</id>
+  <yt:videoId>c1rPlzxSZ8E</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>Meta is pivoting again... everything you missed from Connect 2026</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=c1rPlzxSZ8E"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-25T19:22:32+00:00</published>
+  <updated>2026-09-30T21:37:28+00:00</updated>
+  <media:group>
+   <media:title>Meta is pivoting again... everything you missed from Connect 2026</media:title>
+   <media:content url="https://www.youtube.com/v/c1rPlzxSZ8E?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i4.ytimg.com/vi/c1rPlzxSZ8E/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Get $100 in Hyperagent bonus credits when you sign up for a paid plan - https://www.hyperagent.com/fireship100
+
+In this video we break down everything from Meta Connect 2026. Let's dive in. 
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="17431" average="5.00" min="1" max="5"/>
+    <media:statistics views="1586683"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:ylO0DQeVEBQ</id>
+  <yt:videoId>ylO0DQeVEBQ</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>The most expensive 33 hours in WordPress history...</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=ylO0DQeVEBQ"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-23T17:17:22+00:00</published>
+  <updated>2026-09-30T17:49:59+00:00</updated>
+  <media:group>
+   <media:title>The most expensive 33 hours in WordPress history...</media:title>
+   <media:content url="https://www.youtube.com/v/ylO0DQeVEBQ?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i2.ytimg.com/vi/ylO0DQeVEBQ/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Greptile is the only AI code reviewer that actually runs your code. Try it for free: http://greptile.com/go/fireship
+
+Automattic's board fired WordPress co-founder Matt Mullenweg while he was at Burning Man... 33 hours later, he replaced the board and declared himself a pirate. Let's dive in.
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="15694" average="5.00" min="1" max="5"/>
+    <media:statistics views="1248568"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:TbkUKCm3CHQ</id>
+  <yt:videoId>TbkUKCm3CHQ</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>An ex-OpenAI researcher just deleted language from the LLM...</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=TbkUKCm3CHQ"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-21T17:52:29+00:00</published>
+  <updated>2026-10-01T16:20:44+00:00</updated>
+  <media:group>
+   <media:title>An ex-OpenAI researcher just deleted language from the LLM...</media:title>
+   <media:content url="https://www.youtube.com/v/TbkUKCm3CHQ?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i1.ytimg.com/vi/TbkUKCm3CHQ/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Mux is the video API that translates audio and answers questions about your video. Get $50 in free credits: https://mux.com/fireship
+
+Ex-OpenAI researcher Diogo Almeida spent two years in stealth building Jev, a &quot;System 1&quot; AI model that can't talk or write code but claims to be 200x faster, 400x cheaper, and hallucination-free. Let's dive in.
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="31480" average="5.00" min="1" max="5"/>
+    <media:statistics views="2952587"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:LoLYw--s-5w</id>
+  <yt:videoId>LoLYw--s-5w</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>Did Google just kickstart the intelligence explosion?</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=LoLYw--s-5w"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-17T20:33:55+00:00</published>
+  <updated>2026-09-30T20:31:41+00:00</updated>
+  <media:group>
+   <media:title>Did Google just kickstart the intelligence explosion?</media:title>
+   <media:content url="https://www.youtube.com/v/LoLYw--s-5w?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i1.ytimg.com/vi/LoLYw--s-5w/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Run GitHub Actions 2x faster and build with Codesmith at https://www.blacksmith.sh/
+
+Google DeepMind just published Dream-RSI, a technique that turns an AI's old discovery logs into a simulator so it can test thousands of exploration strategies. But is this actually RSI or just a search algorithm with caching? Let's dive in. 
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="25919" average="5.00" min="1" max="5"/>
+    <media:statistics views="1972944"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:7r4ikZHm9AI</id>
+  <yt:videoId>7r4ikZHm9AI</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>Anthropic researchers are quitting... and now we know why</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=7r4ikZHm9AI"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-15T17:45:39+00:00</published>
+  <updated>2026-10-07T09:16:58+00:00</updated>
+  <media:group>
+   <media:title>Anthropic researchers are quitting... and now we know why</media:title>
+   <media:content url="https://www.youtube.com/v/7r4ikZHm9AI?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i4.ytimg.com/vi/7r4ikZHm9AI/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Macroscope can auto-approve your team’s PRs safely. Try it here:
+https://macroscope.com/?utm_source=fireship
+
+Anthropic just dropped a 154-page report on how hackers, scientists, and rival AI labs have been abusing Claude. Let's dive in.
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="37495" average="5.00" min="1" max="5"/>
+    <media:statistics views="2754591"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:aspmNhKAFMc</id>
+  <yt:videoId>aspmNhKAFMc</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>OpenAI's biggest math breakthrough is getting ugly...</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=aspmNhKAFMc"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-11T17:24:40+00:00</published>
+  <updated>2026-09-25T23:38:48+00:00</updated>
+  <media:group>
+   <media:title>OpenAI's biggest math breakthrough is getting ugly...</media:title>
+   <media:content url="https://www.youtube.com/v/aspmNhKAFMc?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i2.ytimg.com/vi/aspmNhKAFMc/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Railway is the smoothest way to deploy software: https://railway.com/?referralCode=fireship
+
+OpenAI claims it cracked a 90 year old math problem, but one NYU professor isn't happy about it. Let's dive in. 
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="30665" average="5.00" min="1" max="5"/>
+    <media:statistics views="3419321"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:2Xiljy4xzbc</id>
+  <yt:videoId>2Xiljy4xzbc</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>I built the same game with Astra and Fable 5.1... only one was fun</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=2Xiljy4xzbc"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-09T16:34:27+00:00</published>
+  <updated>2026-10-03T08:19:01+00:00</updated>
+  <media:group>
+   <media:title>I built the same game with Astra and Fable 5.1... only one was fun</media:title>
+   <media:content url="https://www.youtube.com/v/2Xiljy4xzbc?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i3.ytimg.com/vi/2Xiljy4xzbc/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Get 20% off Mobbin Pro to help your agent design UIs that actually convert - https://mobbin.com/fireship
+
+Now that Astra is actually available to use, let's see if it lives up to the hype.
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="32129" average="5.00" min="1" max="5"/>
+    <media:statistics views="2949104"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:Y5rSSvXfL4g</id>
+  <yt:videoId>Y5rSSvXfL4g</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>5 open source tools that replaced my $320/mo AI stack...</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=Y5rSSvXfL4g"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-07T17:24:51+00:00</published>
+  <updated>2026-10-02T01:58:42+00:00</updated>
+  <media:group>
+   <media:title>5 open source tools that replaced my $320/mo AI stack...</media:title>
+   <media:content url="https://www.youtube.com/v/Y5rSSvXfL4g?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i2.ytimg.com/vi/Y5rSSvXfL4g/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Get 67% off VPS hosting with Hostinger's one-click templates. Use code FIRESHIP for an extra discount - https://hostinger.com/fireship
+
+In this video we cover 5 free and open-source tools that'll help you cut token costs. Let's dive in.
+
+- Ollama
+- 9router
+- Headroom
+- Diffy
+- OpenHands
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="19666" average="5.00" min="1" max="5"/>
+    <media:statistics views="1263332"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:FluKUJyeYD8</id>
+  <yt:videoId>FluKUJyeYD8</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>Did OpenAI actually build AGI? GPT-6 Astra first look</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=FluKUJyeYD8"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-04T20:14:12+00:00</published>
+  <updated>2026-09-28T07:53:01+00:00</updated>
+  <media:group>
+   <media:title>Did OpenAI actually build AGI? GPT-6 Astra first look</media:title>
+   <media:content url="https://www.youtube.com/v/FluKUJyeYD8?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i3.ytimg.com/vi/FluKUJyeYD8/hqdefault.jpg" width="480" height="360"/>
+   <media:description>CodeRabbit Security protects your code from AI-driven exploits. Get 10 free code scans here: https://coderabbit.link/fireship-010
+
+OpenAI finally announced GPT-6 Astra which they're claiming is AGI... Let's see if that's true.
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="46189" average="5.00" min="1" max="5"/>
+    <media:statistics views="4217813"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:0Rp9KJCEIvg</id>
+  <yt:videoId>0Rp9KJCEIvg</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>The most interesting hack in history just got weirder...</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=0Rp9KJCEIvg"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-02T19:01:28+00:00</published>
+  <updated>2026-10-01T19:39:56+00:00</updated>
+  <media:group>
+   <media:title>The most interesting hack in history just got weirder...</media:title>
+   <media:content url="https://www.youtube.com/v/0Rp9KJCEIvg?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i1.ytimg.com/vi/0Rp9KJCEIvg/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Namespace is actually the fastest way to run your GitHub Actions (and more). Try it for free - https://namespace.so/github-actions
+
+OpenAI finally published the postmortem on the Hugging Face hack and it turns out it's way more interesting than we first though. Let's dive in.
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="28627" average="5.00" min="1" max="5"/>
+    <media:statistics views="1872316"/>
+   </media:community>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:r-tzcMlQISk</id>
+  <yt:videoId>r-tzcMlQISk</yt:videoId>
+  <yt:channelId>UCsBjURrPoezykLs9EqgamOA</yt:channelId>
+  <title>The mystery is solved... and the answer is 40x cheaper than Claude</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=r-tzcMlQISk"/>
+  <author>
+   <name>Fireship</name>
+   <uri>https://www.youtube.com/channel/UCsBjURrPoezykLs9EqgamOA</uri>
+  </author>
+  <published>2026-09-01T17:31:27+00:00</published>
+  <updated>2026-10-02T01:03:43+00:00</updated>
+  <media:group>
+   <media:title>The mystery is solved... and the answer is 40x cheaper than Claude</media:title>
+   <media:content url="https://www.youtube.com/v/r-tzcMlQISk?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i3.ytimg.com/vi/r-tzcMlQISk/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Exa gives your agents the largest index of public and private data. Get $20 in credits - https://dashboard.exa.ai/billing?coupon=EXA20FIRESHIP
+
+An anonymous model called Ox Alpha just conquered OpenRouter, serving 42 trillion tokens in six days before being unmasked as Zhipu's GLM-5.3-Flash. Let's break it down.
+
+#coding #programming
+
+Want more Fireship?
+
+🗞️ Newsletter: https://bytes.dev
+🧠 Courses: https://fireship.dev</media:description>
+   <media:community>
+    <media:starRating count="22689" average="5.00" min="1" max="5"/>
+    <media:statistics views="1765070"/>
+   </media:community>
+  </media:group>
+ </entry>
+</feed>

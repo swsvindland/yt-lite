@@ -26,10 +26,6 @@ impl Verdict {
             Verdict::NotShort => 0,
         }
     }
-
-    pub fn from_db(v: i64) -> Self {
-        if v == 0 { Verdict::NotShort } else { Verdict::Short }
-    }
 }
 
 /// What the feed source itself told us about the video's URL shape.

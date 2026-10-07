@@ -1,7 +1,8 @@
 //! Settings file (`config.toml`) and platform directories.
 //!
 //! Windows: `%APPDATA%\yt-lite\config\config.toml`, cache under
-//! `%LOCALAPPDATA%\yt-lite\cache`. Override the config file with `YT_LITE_CONFIG`.
+//! `%LOCALAPPDATA%\yt-lite\cache`. Override the config file with `YT_LITE_CONFIG`,
+//! or put everything in one folder with `YT_LITE_HOME`.
 
 use std::path::{Path, PathBuf};
 
@@ -70,6 +71,8 @@ pub struct FeedConfig {
     /// Parallel RSS requests.
     pub rss_concurrency: usize,
     pub hide_watched: bool,
+    /// Channel ids (UC...) to follow via RSS even without signing in.
+    pub extra_channels: Vec<String>,
 }
 
 impl Default for FeedConfig {
@@ -80,6 +83,7 @@ impl Default for FeedConfig {
             max_items: 1000,
             rss_concurrency: 8,
             hide_watched: false,
+            extra_channels: Vec::new(),
         }
     }
 }
@@ -138,16 +142,29 @@ pub struct Paths {
 
 impl Paths {
     pub fn resolve() -> Result<Self> {
-        let dirs = ProjectDirs::from("", "", "yt-lite").context("no home directory")?;
-        let config_dir = dirs.config_dir().to_path_buf();
+        // YT_LITE_HOME puts everything under one folder (portable mode).
+        let (config_dir, data_dir, cache_dir) = match std::env::var_os("YT_LITE_HOME") {
+            Some(home) => {
+                let home = PathBuf::from(home);
+                (home.clone(), home.join("data"), home.join("cache"))
+            }
+            None => {
+                let dirs = ProjectDirs::from("", "", "yt-lite").context("no home directory")?;
+                (
+                    dirs.config_dir().to_path_buf(),
+                    dirs.data_local_dir().to_path_buf(),
+                    dirs.cache_dir().to_path_buf(),
+                )
+            }
+        };
         let config_file = std::env::var_os("YT_LITE_CONFIG")
             .map(PathBuf::from)
             .unwrap_or_else(|| config_dir.join("config.toml"));
         Ok(Self {
             config_file,
             config_dir,
-            data_dir: dirs.data_local_dir().to_path_buf(),
-            cache_dir: dirs.cache_dir().to_path_buf(),
+            data_dir,
+            cache_dir,
         })
     }
 
@@ -209,6 +226,8 @@ max_age_days = 60
 max_items = 1000
 rss_concurrency = 8
 hide_watched = false
+# Channels to follow via RSS without signing in, e.g. ["UCBJycsmduvYEL83R_U4JriQ"]
+extra_channels = []
 
 [cache]
 thumb_memory_mb = 50

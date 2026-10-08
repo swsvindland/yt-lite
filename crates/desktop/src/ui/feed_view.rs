@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use futures::future::{Either, select};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::spinner::Spinner;
@@ -27,6 +28,7 @@ use crate::app_state::{Account, AppConfig, AppServices};
 use crate::auth::NotSignedIn;
 use crate::db::{FeedQuery, VideoRow};
 use crate::feed::pipeline;
+use crate::feed::query::{EXPLORE_TOPICS, QuerySource};
 use crate::feed::{FeedKind, FeedSource};
 use crate::player::{Method, Player, Prepared};
 use crate::system_player::SystemPlayer;
@@ -92,11 +94,41 @@ pub struct FeedView {
     last_refresh: Option<i64>,
     scroll_test_started: bool,
     scroll: UniformListScrollHandle,
+    /// Search and Explore: the source whose query we set.
+    query: Option<Arc<QuerySource>>,
+    search_input: Option<Entity<InputState>>,
+    topic: usize,
     _subscriptions: Vec<Subscription>,
-    _timer: Task<()>,
+    _timer: Option<Task<()>>,
 }
 
 impl FeedView {
+    /// Search or Explore, backed by a [`QuerySource`].
+    pub fn new_query(
+        source: Arc<QuerySource>,
+        shared: Shared,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new(source.clone(), shared, window, cx);
+        if source.kind() == FeedKind::Search {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search YouTube"));
+            this._subscriptions.push(cx.subscribe_in(
+                &input,
+                window,
+                |this, input, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        let query = input.read(cx).value().to_string();
+                        this.run_query(&query, window, cx);
+                    }
+                },
+            ));
+            this.search_input = Some(input);
+        }
+        this.query = Some(source);
+        this
+    }
+
     pub fn new(
         source: Arc<dyn FeedSource>,
         shared: Shared,
@@ -104,16 +136,19 @@ impl FeedView {
         cx: &mut Context<Self>,
     ) -> Self {
         let interval = AppServices::get(cx).config.feed.refresh_interval();
-        let timer = cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(interval).await;
-                if this
-                    .update_in(cx, |v, window, cx| v.refresh(window, cx))
-                    .is_err()
-                {
-                    break;
+        // Search results are only fetched on demand.
+        let timer = (source.kind() != FeedKind::Search).then(|| {
+            cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(interval).await;
+                    if this
+                        .update_in(cx, |v, window, cx| v.refresh(window, cx))
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
-            }
+            })
         });
         let mut was_signed_in = Account::get(cx).signed_in;
         let subscriptions = vec![
@@ -140,6 +175,9 @@ impl FeedView {
             last_refresh: None,
             scroll_test_started: false,
             scroll: UniformListScrollHandle::new(),
+            query: None,
+            search_input: None,
+            topic: 0,
             _subscriptions: subscriptions,
             _timer: timer,
         };
@@ -149,6 +187,10 @@ impl FeedView {
 
     /// Shows the cached feed immediately, then refreshes if it's stale.
     fn startup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.source.kind() == FeedKind::Search {
+            self.loaded_once = true;
+            return;
+        }
         let services = AppServices::get(cx);
         let kind = self.source.kind();
         cx.spawn_in(window, async move |this, cx| {
@@ -175,7 +217,38 @@ impl FeedView {
         .detach();
     }
 
+    /// Runs a search (or switches the Explore topic).
+    fn run_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(source) = &self.query else { return };
+        if query.trim().is_empty() {
+            return;
+        }
+        source.set_query(query);
+        self.cards = Rc::new(Vec::new());
+        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.refresh(window, cx);
+    }
+
+    /// Puts `query` in the search box and runs it.
+    pub fn search_for(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = &self.search_input {
+            let q = query.to_string();
+            input.update(cx, |s, cx| s.set_value(q, window, cx));
+        }
+        self.run_query(query, window, cx);
+    }
+
+    /// Focuses the search box (Search page).
+    pub fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = &self.search_input {
+            input.update(cx, |s, cx| s.focus(window, cx));
+        }
+    }
+
     fn is_stale(&self, cx: &App) -> bool {
+        if self.source.kind() == FeedKind::Search {
+            return false;
+        }
         let interval = AppConfig::get(cx).feed.refresh_interval().as_secs() as i64;
         self.stale || self.last_refresh.is_none_or(|t| now_unix() - t >= interval)
     }
@@ -566,65 +639,137 @@ impl FeedView {
             .into_any_element()
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
-        let hide_watched = AppConfig::get(cx).feed.hide_watched;
-        let subtitle: SharedString = if self.status.is_empty() {
-            format!("{} videos", self.cards.len()).into()
-        } else {
-            self.status.clone()
-        };
-        h_flex()
-            .w_full()
-            .px(px(PAD_X))
-            .pt_6()
-            .pb_4()
-            .gap_4()
-            .items_end()
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_weight(FontWeight::BOLD)
-                            .child(self.source.display_name()),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .when(self.refreshing, |d| d.child(Spinner::new().xsmall()))
-                            .child(div().truncate().child(subtitle)),
+    fn render_controls(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(input) = &self.search_input {
+            return h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div().w(px(420.)).child(
+                        Input::new(input)
+                            .prefix(Icon::new(IconName::Search).small())
+                            .cleanable(true),
                     ),
+                )
+                .child(
+                    Button::new("search")
+                        .primary()
+                        .small()
+                        .label("Search")
+                        .loading(self.refreshing)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let query = this
+                                .search_input
+                                .as_ref()
+                                .map(|i| i.read(cx).value().to_string())
+                                .unwrap_or_default();
+                            this.run_query(&query, window, cx);
+                        })),
+                )
+                .into_any_element();
+        }
+        let hide_watched = AppConfig::get(cx).feed.hide_watched;
+        h_flex()
+            .gap_4()
+            .items_center()
+            .child(
+                Switch::new("hide-watched")
+                    .checked(hide_watched)
+                    .label("Hide watched")
+                    .small()
+                    .on_click(|checked, _, cx| {
+                        let checked = *checked;
+                        AppConfig::update(cx, |c| c.feed.hide_watched = checked);
+                    }),
             )
+            .child(
+                Button::new("refresh")
+                    .outline()
+                    .small()
+                    .icon(IconName::RefreshCw)
+                    .label("Refresh")
+                    .loading(self.refreshing)
+                    .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
+            )
+            .into_any_element()
+    }
+
+    /// Explore: one chip per topic.
+    fn render_topics(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.source.kind() != FeedKind::Explore {
+            return None;
+        }
+        let chips = EXPLORE_TOPICS
+            .iter()
+            .enumerate()
+            .map(|(ix, (label, query))| {
+                let selected = ix == self.topic;
+                let button = Button::new(("topic", ix)).small().label(*label);
+                let button = if selected {
+                    button.primary()
+                } else {
+                    button.outline()
+                };
+                button.on_click(cx.listener(move |this, _, window, cx| {
+                    this.topic = ix;
+                    this.run_query(query, window, cx);
+                }))
+            });
+        Some(
+            h_flex()
+                .px(px(PAD_X))
+                .pb_4()
+                .gap_2()
+                .flex_wrap()
+                .children(chips)
+                .into_any_element(),
+        )
+    }
+
+    fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
+        let controls = self.render_controls(cx);
+        let topics = self.render_topics(cx);
+        let theme = cx.theme();
+        let subtitle: SharedString = if !self.status.is_empty() {
+            self.status.clone()
+        } else if self.source.kind() == FeedKind::Search && self.cards.is_empty() {
+            "Results never include Shorts.".into()
+        } else {
+            format!("{} videos", self.cards.len()).into()
+        };
+        v_flex()
+            .w_full()
             .child(
                 h_flex()
+                    .w_full()
+                    .px(px(PAD_X))
+                    .pt_6()
+                    .pb_4()
                     .gap_4()
-                    .items_center()
+                    .items_end()
                     .child(
-                        Switch::new("hide-watched")
-                            .checked(hide_watched)
-                            .label("Hide watched")
-                            .small()
-                            .on_click(|checked, _, cx| {
-                                let checked = *checked;
-                                AppConfig::update(cx, |c| c.feed.hide_watched = checked);
-                            }),
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_2xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(self.source.display_name()),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .text_sm()
+                                    .text_color(theme.muted_foreground)
+                                    .when(self.refreshing, |d| d.child(Spinner::new().xsmall()))
+                                    .child(div().truncate().child(subtitle)),
+                            ),
                     )
-                    .child(
-                        Button::new("refresh")
-                            .outline()
-                            .small()
-                            .icon(IconName::RefreshCw)
-                            .label("Refresh")
-                            .loading(self.refreshing)
-                            .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
-                    ),
+                    .child(controls),
             )
+            .children(topics)
             .into_any_element()
     }
 
@@ -669,6 +814,13 @@ impl FeedView {
                     "Add your Google OAuth client in Settings to load your subscriptions."
                 },
                 Some(button.into_any_element()),
+            )
+        } else if self.source.kind() == FeedKind::Search {
+            (
+                IconName::Search,
+                "Search YouTube",
+                "Type a query and press Enter. Works without signing in.",
+                None,
             )
         } else if self.source.kind() == FeedKind::Home {
             (

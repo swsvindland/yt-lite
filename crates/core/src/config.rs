@@ -183,6 +183,15 @@ impl Paths {
         }
     }
 
+    /// Credential-store service name: the default for the normal install,
+    /// a per-folder one in portable mode (`YT_LITE_HOME`).
+    pub fn keyring_service(&self) -> String {
+        match std::env::var_os("YT_LITE_HOME") {
+            Some(home) => format!("yt-lite ({})", PathBuf::from(home).display()),
+            None => crate::auth::DEFAULT_KEYRING_SERVICE.to_string(),
+        }
+    }
+
     pub fn db_file(&self) -> PathBuf {
         self.data_dir.join("cache.sqlite3")
     }

@@ -20,7 +20,8 @@ use crate::net::Http;
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const SCOPE: &str = "https://www.googleapis.com/auth/youtube.readonly";
-const KEYRING_SERVICE: &str = "yt-lite";
+/// Credential-store service name for the normal install.
+pub const DEFAULT_KEYRING_SERVICE: &str = "yt-lite";
 const KEYRING_USER: &str = "google-refresh-token";
 
 #[derive(Debug)]
@@ -36,6 +37,9 @@ impl std::error::Error for NotSignedIn {}
 
 pub struct Auth {
     google: GoogleConfig,
+    /// Credential-store service; separate installs (portable / test homes)
+    /// use their own so they never read each other's tokens.
+    keyring_service: String,
     http: Http,
     access: Mutex<Option<(String, Instant)>>,
     /// The refresh token, read from the credential store at most once per run.
@@ -51,17 +55,18 @@ struct TokenResponse {
 }
 
 impl Auth {
-    pub fn new(google: GoogleConfig, http: Http) -> Self {
+    pub fn new(google: GoogleConfig, http: Http, keyring_service: impl Into<String>) -> Self {
         Self {
             google,
+            keyring_service: keyring_service.into(),
             http,
             access: Mutex::new(None),
             refresh: Mutex::new(None),
         }
     }
 
-    fn entry() -> Result<keyring::Entry> {
-        keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).context("opening credential store")
+    fn entry(&self) -> Result<keyring::Entry> {
+        keyring::Entry::new(&self.keyring_service, KEYRING_USER).context("opening credential store")
     }
 
     fn refresh_token(&self) -> Result<Option<String>> {
@@ -69,13 +74,13 @@ impl Auth {
         if let Some(token) = cached.as_ref() {
             return Ok(token.clone());
         }
-        let token = Self::read_refresh_token()?;
+        let token = self.read_refresh_token()?;
         *cached = Some(token.clone());
         Ok(token)
     }
 
-    fn read_refresh_token() -> Result<Option<String>> {
-        match Self::entry()?.get_password() {
+    fn read_refresh_token(&self) -> Result<Option<String>> {
+        match self.entry()?.get_password() {
             Ok(t) => Ok(Some(t)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(anyhow!(e).context("reading credential store")),
@@ -89,7 +94,7 @@ impl Auth {
     pub fn sign_out(&self) -> Result<()> {
         *self.access.lock().unwrap() = None;
         *self.refresh.lock().unwrap() = Some(None);
-        match Self::entry()?.delete_credential() {
+        match self.entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
         }
@@ -193,7 +198,7 @@ impl Auth {
             .refresh_token
             .as_deref()
             .ok_or_else(|| anyhow!("Google did not return a refresh token"))?;
-        Self::entry()?
+        self.entry()?
             .set_password(refresh)
             .context("saving refresh token to credential store")?;
         *self.refresh.lock().unwrap() = Some(Some(refresh.to_string()));

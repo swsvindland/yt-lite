@@ -17,16 +17,19 @@ use super::status::MemoryIndicator;
 use super::thumb_store::ThumbStore;
 use crate::app_state::{Account, AppConfig, AppServices};
 use crate::feed::foryou::ForYouSource;
+use crate::feed::query::QuerySource;
 use crate::feed::subscriptions::SubscriptionsSource;
 use crate::player::Player;
 use crate::system_player::SystemPlayer;
 use crate::thumbs::Thumbnails;
-use crate::{OpenConfigFolder, Refresh, ToggleHideWatched};
+use crate::{FocusSearch, OpenConfigFolder, Refresh, ToggleHideWatched};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Subscriptions,
     ForYou,
+    Explore,
+    Search,
     Settings,
 }
 
@@ -34,6 +37,8 @@ pub struct AppView {
     page: Page,
     subscriptions: Entity<FeedView>,
     for_you: Entity<FeedView>,
+    explore: Entity<FeedView>,
+    search: Entity<FeedView>,
     settings: Entity<SettingsView>,
     memory: Entity<MemoryIndicator>,
     thumbs: Entity<ThumbStore>,
@@ -63,12 +68,18 @@ impl AppView {
         };
         let subscriptions =
             cx.new(|cx| FeedView::new(Arc::new(SubscriptionsSource), shared.clone(), window, cx));
-        let for_you = cx.new(|cx| FeedView::new(Arc::new(ForYouSource), shared, window, cx));
+        let for_you =
+            cx.new(|cx| FeedView::new(Arc::new(ForYouSource), shared.clone(), window, cx));
+        let explore = cx.new(|cx| {
+            FeedView::new_query(Arc::new(QuerySource::explore()), shared.clone(), window, cx)
+        });
+        let search =
+            cx.new(|cx| FeedView::new_query(Arc::new(QuerySource::search()), shared, window, cx));
         let settings = cx.new(|_| SettingsView);
         let memory = cx.new(MemoryIndicator::new);
 
         let mut subs = Vec::new();
-        for feed in [&subscriptions, &for_you] {
+        for feed in [&subscriptions, &for_you, &explore, &search] {
             subs.push(
                 cx.subscribe_in(feed, window, |this, _, event, window, cx| match event {
                     FeedEvent::OpenSettings => this.show(Page::Settings, window, cx),
@@ -105,18 +116,27 @@ impl AppView {
         let page = match std::env::var("YT_LITE_PAGE").as_deref() {
             Ok("foryou") => Page::ForYou,
             Ok("settings") => Page::Settings,
+            Ok("explore") => Page::Explore,
+            Ok("search") => Page::Search,
             _ => Page::Subscriptions,
         };
-        let this = Self {
+        let mut this = Self {
             page,
             subscriptions,
             for_you,
+            explore,
+            search,
             settings,
             memory,
             thumbs,
             focus,
             _subscriptions: subs,
         };
+        // `YT_LITE_SEARCH=<query>`: open Search with this query (testing aid).
+        if let Some(q) = std::env::var("YT_LITE_SEARCH").ok().filter(|s| !s.is_empty()) {
+            this.page = Page::Search;
+            this.search.update(cx, |v, cx| v.search_for(&q, window, cx));
+        }
         // `YT_LITE_AUTOPLAY=<video id>`: play on startup (testing aid).
         if let Some(id) = std::env::var("YT_LITE_AUTOPLAY")
             .ok()
@@ -134,6 +154,9 @@ impl AppView {
         if let Some(feed) = self.active_feed() {
             feed.update(cx, |v, cx| v.activate(window, cx));
         }
+        if page == Page::Search {
+            self.search.update(cx, |v, cx| v.focus_search(window, cx));
+        }
         cx.notify();
     }
 
@@ -141,6 +164,8 @@ impl AppView {
         match self.page {
             Page::Subscriptions => Some(self.subscriptions.clone()),
             Page::ForYou => Some(self.for_you.clone()),
+            Page::Explore => Some(self.explore.clone()),
+            Page::Search => Some(self.search.clone()),
             Page::Settings => None,
         }
     }
@@ -161,6 +186,8 @@ impl AppView {
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let nav_subs = self.nav_item("Subscriptions", IconName::Inbox, Page::Subscriptions, cx);
         let nav_for_you = self.nav_item("For you", IconName::Star, Page::ForYou, cx);
+        let nav_explore = self.nav_item("Explore", IconName::Globe, Page::Explore, cx);
+        let nav_search = self.nav_item("Search", IconName::Search, Page::Search, cx);
         let nav_settings = self.nav_item("Settings", IconName::Settings, Page::Settings, cx);
         let theme = cx.theme();
         let account = Account::get(cx);
@@ -212,8 +239,13 @@ impl AppView {
             .w(px(SIDEBAR_W))
             .header(SidebarHeader::new().child(logo))
             .child(
-                SidebarGroup::new("Watch")
-                    .child(SidebarMenu::new().child(nav_subs).child(nav_for_you)),
+                SidebarGroup::new("Watch").child(
+                    SidebarMenu::new()
+                        .child(nav_subs)
+                        .child(nav_for_you)
+                        .child(nav_explore)
+                        .child(nav_search),
+                ),
             )
             .child(SidebarGroup::new("App").child(SidebarMenu::new().child(nav_settings)))
             .footer(
@@ -245,6 +277,8 @@ impl Render for AppView {
         let page: AnyElement = match self.page {
             Page::Subscriptions => self.subscriptions.clone().into_any_element(),
             Page::ForYou => self.for_you.clone().into_any_element(),
+            Page::Explore => self.explore.clone().into_any_element(),
+            Page::Search => self.search.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
         };
         let theme = cx.theme();
@@ -259,6 +293,11 @@ impl Render for AppView {
             .on_action(cx.listener(|_, _: &ToggleHideWatched, _, cx| {
                 AppConfig::update(cx, |c| c.feed.hide_watched = !c.feed.hide_watched);
             }))
+            .on_action(
+                cx.listener(|this, _: &FocusSearch, window, cx| {
+                    this.show(Page::Search, window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &OpenConfigFolder, window, cx| {
                 this.show(Page::Settings, window, cx)
             }))

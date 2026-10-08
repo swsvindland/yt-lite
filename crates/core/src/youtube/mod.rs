@@ -1,7 +1,9 @@
 pub mod api;
 pub mod duration;
+pub mod listing;
 pub mod related;
 pub mod rss;
+pub mod search;
 
 pub fn watch_url(video_id: &str) -> String {
     format!("https://www.youtube.com/watch?v={video_id}")

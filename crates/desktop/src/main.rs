@@ -33,7 +33,8 @@ actions!(
         CloseWindow,
         Refresh,
         ToggleHideWatched,
-        OpenConfigFolder
+        OpenConfigFolder,
+        FocusSearch
     ]
 );
 
@@ -52,6 +53,8 @@ fn init_menus(cx: &mut App) {
         KeyBinding::new("f5", Refresh, None),
         KeyBinding::new("secondary-shift-h", ToggleHideWatched, None),
         KeyBinding::new("secondary-,", OpenConfigFolder, None),
+        KeyBinding::new("secondary-k", FocusSearch, None),
+        KeyBinding::new("secondary-f", FocusSearch, None),
     ]);
     cx.set_menus([
         Menu::new("yt-lite").items([
@@ -63,6 +66,7 @@ fn init_menus(cx: &mut App) {
         Menu::new("View").items([
             MenuItem::action("Refresh", Refresh),
             MenuItem::action("Hide/Show Watched", ToggleHideWatched),
+            MenuItem::action("Search", FocusSearch),
         ]),
     ]);
     // Single-window app: closing it quits (macOS would otherwise keep running).
@@ -104,7 +108,7 @@ fn main() -> anyhow::Result<()> {
     let player = Player::detect(&config.player, &paths, native);
     let dark = config.ui.dark;
     let services = Arc::new(Services {
-        auth: Auth::new(config.google.clone(), http.clone()),
+        auth: Auth::new(config.google.clone(), http.clone(), paths.keyring_service()),
         http,
         db,
         config: config.clone(),

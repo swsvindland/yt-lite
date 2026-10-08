@@ -8,8 +8,9 @@ resolved natively in Rust (~0.2 s) and played by the operating system's own medi
 [yt-dlp](https://github.com/yt-dlp/yt-dlp), if installed, is a fallback resolver. The app
 never loads YouTube's web player or a web view.
 
-- Sidebar with **Subscriptions** (chronological), **For you** (recommendations, no YouTube login
-  needed) and **Settings**
+- Sidebar with **Subscriptions** (chronological), **For you** (recommendations), **Explore**
+  (popular this week by topic), **Search** and **Settings**. Everything except Subscriptions
+  works without signing in.
 - Responsive grid: thumbnail, title, channel, duration, age
 - **No Shorts, anywhere.** Filtered centrally for every feed source; the filter fails closed
 - Click a video to play it in a native player window (1080p max by default); watched state is
@@ -71,12 +72,18 @@ brew install yt-dlp                   # optional fallback resolver (and mpv, for
 
 Any Xcode Command Line Tools install is enough to build. Config lives in
 `~/Library/Application Support/yt-lite/config.toml` (⌘, opens the folder), the refresh token in
-the login Keychain. The bundle is ad-hoc signed, so after each rebuild macOS asks once whether
-yt-lite may use its Keychain item ("Always Allow"). Logs go to
+the login Keychain.
+
+**Keychain prompts:** macOS ties Keychain access to the app's code signature. `cargo run` (via the
+runner in `.cargo/config.toml`) and `scripts/bundle-macos.sh` sign yt-lite with your first
+"Apple Development" certificate (Xcode creates one when you add your Apple ID; override with
+`YT_LITE_SIGN_IDENTITY`). The signature then stays the same across rebuilds, so click
+**Always Allow** once. Without a certificate it falls back to ad-hoc signing and macOS asks after
+every rebuild. The token is read once per run. Logs go to
 `~/Library/Application Support/yt-lite/data/yt-lite.log` when launched from the bundle.
 
-Shortcuts: ⌘R refresh, ⇧⌘H hide/show watched, ⌘, config folder, ⌘W / ⌘Q quit (Ctrl on Windows;
-F5 also refreshes).
+Shortcuts: ⌘K / ⌘F search, ⌘R refresh, ⇧⌘H hide/show watched, ⌘, settings, ⌘W / ⌘Q quit
+(Ctrl on Windows; F5 also refreshes).
 
 ### 3. Google Cloud OAuth client (for your subscription list)
 
@@ -157,10 +164,11 @@ Environment variables:
 | Variable | Effect |
 |---|---|
 | `YT_LITE_CONFIG` | Use this config file instead |
-| `YT_LITE_HOME` | Portable mode: config, data, and cache all under this folder |
+| `YT_LITE_HOME` | Portable mode: config, data, cache, and its own Keychain/Credential Manager entry under this folder |
 | `YT_LITE_SCROLL_TEST=1` | Memory self-test: scroll the whole grid twice and log RSS |
 | `YT_LITE_AUTOPLAY=<id>` | Play this video on startup (testing aid) |
-| `YT_LITE_PAGE=foryou\|settings` | Start on that page (testing aid) |
+| `YT_LITE_PAGE=foryou\|explore\|search\|settings` | Start on that page (testing aid) |
+| `YT_LITE_SEARCH=<query>` | Start with this search (testing aid) |
 | `RUST_LOG` | Log filter, e.g. `info,yt_lite=debug` |
 
 ### SponsorBlock (mpv backend only)
@@ -271,6 +279,17 @@ Recommendations without signing in to YouTube. Logged out, YouTube's own home fe
    API. Shorts shelves are skipped outright.
 
 It refreshes when stale (15 min) and whenever you open the tab after playing something.
+
+### Search and Explore (`crates/core/src/feed/query.rs`)
+
+Both use InnerTube `search` as the logged-out WEB client (YouTube removed the logged-out
+Trending/Explore pages in 2025; their browse ids now return "invalid argument").
+
+- **Search** (⌘K / ⌘F): videos only, by relevance, first page (~20 results).
+- **Explore**: topic chips (Popular, Music, Gaming, Tech, …) run "uploaded this week, most
+  viewed" searches. Popularity is global, so results skew toward the largest audiences.
+
+Results go through the shared pipeline, so Shorts are filtered the same way as every other feed.
 
 ### Settings
 
@@ -384,6 +403,7 @@ docs/ios.md          plan for a SwiftUI iPhone app on the same core
 
 - **Real YouTube home feed** (cookie-authenticated InnerTube), as another `FeedSource` next to
   For you.
+- Search pagination (continuations) and channel pages.
 - **Embedded libmpv** inside the GPUI window.
 - **iPhone app** in SwiftUI on `yt-lite-core`, see [docs/ios.md](docs/ios.md).
 - **Search.**

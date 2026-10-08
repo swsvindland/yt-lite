@@ -6,6 +6,7 @@
 
 pub mod foryou;
 pub mod pipeline;
+pub mod query;
 pub mod subscriptions;
 
 use anyhow::Result;
@@ -33,6 +34,10 @@ pub enum FeedKind {
     Subscriptions,
     /// "For you": related videos of what you watched.
     Home,
+    /// Search results for the current query.
+    Search,
+    /// Popular this week, by topic.
+    Explore,
 }
 
 impl FeedKind {
@@ -40,6 +45,8 @@ impl FeedKind {
         match self {
             FeedKind::Subscriptions => "subscriptions",
             FeedKind::Home => "home",
+            FeedKind::Search => "search",
+            FeedKind::Explore => "explore",
         }
     }
 }

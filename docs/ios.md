@@ -29,8 +29,16 @@ a loopback port the Rust core listens on, so there's nothing new to set up in Go
   (account, max quality, hide watched).
 - Pull to refresh; long-press a video to mark it watched/unwatched or share it.
 - Playback: `AVPlayerViewController` presented modally with the resolver's HLS stream. You get
-  native controls, Picture in Picture, AirPlay and background audio, capped with
-  `preferredMaximumResolution`.
+  native controls, Picture in Picture and AirPlay, capped with `preferredMaximumResolution`.
+- **Keep playing in background** (Settings, on by default): when you lock the phone or switch
+  apps, video keeps playing as audio. It uses `audiovisualBackgroundPlaybackPolicy` and detaches
+  the player from its view in the background. Lock Screen / Control Center show title, channel
+  and artwork, with play/pause, ±15 s and scrubbing (`NowPlaying.swift`).
+- **Audio only** (Settings default, or long-press a video → *Listen*): plays just the AAC audio
+  stream (`audio/mp4`, since AVPlayer can't decode Opus/WebM), about 130 kbps instead of several
+  Mbps, with no video decoding. It plays in a mini player above the tab bar with the same
+  lock-screen controls. AVPlayer misreports these files' duration (about 2×), so the listing's
+  duration is used.
 - Thumbnails load straight from `i.ytimg.com` via `AsyncImage`/`URLCache`.
 - Data lives in the app container (`Application Support/yt-lite`), and the refresh token in the
   iOS Keychain.

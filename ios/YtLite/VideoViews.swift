@@ -12,6 +12,16 @@ struct VideoGrid: View {
                     .onTapGesture { model.play(video) }
                     .contextMenu {
                         Button {
+                            model.play(video, audioOnly: false)
+                        } label: {
+                            Label("Watch", systemImage: "play.rectangle")
+                        }
+                        Button {
+                            model.play(video, audioOnly: true)
+                        } label: {
+                            Label("Listen (audio only)", systemImage: "headphones")
+                        }
+                        Button {
                             model.setWatched(video, !video.watched)
                         } label: {
                             Label(

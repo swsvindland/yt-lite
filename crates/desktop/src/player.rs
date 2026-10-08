@@ -118,6 +118,7 @@ impl Player {
             prefs: Prefs {
                 max_tier: cfg.max_height,
                 codecs: cfg.codecs.clone(),
+                audio_mime: None,
             },
             extra_args: cfg.extra_args.clone(),
             native,

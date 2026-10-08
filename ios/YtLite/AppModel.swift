@@ -5,7 +5,7 @@ import Observation
 struct PlayItem: Identifiable {
     let id: String
     let url: URL
-    let title: String
+    let video: Video
     let maxHeight: Int
 }
 
@@ -26,6 +26,16 @@ final class AppModel {
 
     var maxHeight: Int = UserDefaults.standard.object(forKey: "maxHeight") as? Int ?? 1080 {
         didSet { UserDefaults.standard.set(maxHeight, forKey: "maxHeight") }
+    }
+
+    /// Keep playing (as audio) when the phone locks or the app is in the background.
+    var backgroundPlayback: Bool = UserDefaults.standard.object(forKey: "backgroundPlayback") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(backgroundPlayback, forKey: "backgroundPlayback") }
+    }
+
+    /// Play only the audio track by default (podcasts).
+    var audioOnly: Bool = UserDefaults.standard.bool(forKey: "audioOnly") {
+        didSet { UserDefaults.standard.set(audioOnly, forKey: "audioOnly") }
     }
 
     var hideWatched: Bool = UserDefaults.standard.bool(forKey: "hideWatched") {
@@ -89,16 +99,29 @@ final class AppModel {
         }
     }
 
-    func play(_ video: Video) {
+    /// `audioOnly: nil` uses the Settings default.
+    func play(_ video: Video, audioOnly: Bool? = nil) {
         guard let core, !resolving else { return }
         resolving = true
         let maxHeight = maxHeight
+        let wantAudio = audioOnly ?? self.audioOnly
         Task {
             defer { resolving = false }
             do {
-                let playable = try await background { try core.play(id: video.id, maxHeight: UInt32(maxHeight)) }
+                let playable = try await background {
+                    try core.play(id: video.id, maxHeight: UInt32(maxHeight), audioOnly: wantAudio)
+                }
                 guard let url = URL(string: playable.url) else { return }
-                PlayerPresenter.shared.present(PlayItem(id: video.id, url: url, title: video.title, maxHeight: maxHeight))
+                if playable.audioOnly {
+                    PlayerPresenter.shared.stop()
+                    AudioPlayer.shared.play(url: url, video: video)
+                } else {
+                    AudioPlayer.shared.stop()
+                    PlayerPresenter.shared.present(
+                        PlayItem(id: video.id, url: url, video: video, maxHeight: maxHeight),
+                        backgroundPlayback: backgroundPlayback
+                    )
+                }
                 setWatched(video, true)
             } catch {
                 errorMessage = describe(error)

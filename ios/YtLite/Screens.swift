@@ -215,13 +215,19 @@ struct SettingsScreen: View {
                             .foregroundStyle(.orange)
                     }
                 }
-                Section("Playback") {
+                Section {
                     Picker("Maximum quality", selection: $model.maxHeight) {
                         Text("720p").tag(720)
                         Text("1080p").tag(1080)
                         Text("1440p").tag(1440)
                         Text("4K").tag(2160)
                     }
+                    Toggle("Keep playing in background", isOn: $model.backgroundPlayback)
+                    Toggle("Audio only", isOn: $model.audioOnly)
+                } header: {
+                    Text("Playback")
+                } footer: {
+                    Text("Background: videos keep playing as audio when you lock the phone or switch apps, with controls on the Lock Screen. Audio only: plays just the sound (great for podcasts), using far less data and battery. Long-press any video to choose per video.")
                 }
                 Section("Feeds") {
                     Toggle("Hide watched videos", isOn: $model.hideWatched)

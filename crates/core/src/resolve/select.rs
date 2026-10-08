@@ -149,10 +149,16 @@ pub fn pick_video(formats: &[RawFormat], prefs: &Prefs) -> Option<Stream> {
     best.map(to_stream)
 }
 
-pub fn pick_audio(formats: &[RawFormat]) -> Option<Stream> {
+pub fn pick_audio(formats: &[RawFormat], prefs: &Prefs) -> Option<Stream> {
     let candidates: Vec<&RawFormat> = formats
         .iter()
         .filter(|f| usable(f) && f.mime_type.starts_with("audio/") && f.is_drc != Some(true))
+        .filter(|f| {
+            prefs
+                .audio_mime
+                .as_deref()
+                .is_none_or(|m| split_mime(&f.mime_type).0 == m)
+        })
         .collect();
     // Multi-language videos (auto-dubbing) list every track; keep the original.
     let is_original = |f: &&RawFormat| {
@@ -446,7 +452,7 @@ mod tests {
                 true,
             ),
         ];
-        let a = pick_audio(&formats).unwrap();
+        let a = pick_audio(&formats, &Prefs::default()).unwrap();
         assert_eq!((a.itag, a.bitrate), (251, 136_000));
     }
 
@@ -462,6 +468,26 @@ mod tests {
             ),
             audio(249, r#"audio/webm; codecs="opus""#, 50_000, None, false),
         ];
-        assert_eq!(pick_audio(&formats).unwrap().itag, 140);
+        assert_eq!(pick_audio(&formats, &Prefs::default()).unwrap().itag, 140);
+    }
+
+    #[test]
+    fn audio_mime_filter_picks_aac_for_avplayer() {
+        let formats = vec![
+            audio(251, r#"audio/webm; codecs="opus""#, 140_000, Some(("English original", true)), false),
+            audio(140, r#"audio/mp4; codecs="mp4a.40.2""#, 130_000, Some(("English original", true)), false),
+            audio(140, r#"audio/mp4; codecs="mp4a.40.2""#, 130_000, Some(("Japanese", false)), false),
+        ];
+        let prefs = Prefs {
+            audio_mime: Some("audio/mp4".into()),
+            ..Prefs::default()
+        };
+        let a = pick_audio(&formats, &prefs).unwrap();
+        assert_eq!((a.itag, a.mime.as_str()), (140, "audio/mp4"));
+        let none = Prefs {
+            audio_mime: Some("audio/flac".into()),
+            ..Prefs::default()
+        };
+        assert!(pick_audio(&formats, &none).is_none());
     }
 }

@@ -44,6 +44,10 @@ struct RootView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
+        .safeAreaInset(edge: .bottom) {
+            MiniPlayer()
+                .padding(.bottom, 52)
+        }
         .overlay {
             if model.resolving {
                 ProgressView("Opening…")

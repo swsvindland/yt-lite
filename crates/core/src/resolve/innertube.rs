@@ -167,7 +167,7 @@ pub fn interpret(video_id: &str, resp: PlayerResponse, prefs: &Prefs) -> Result<
     let (video, audio) = if is_live {
         (None, None)
     } else {
-        (pick_video(&all, prefs), pick_audio(&all))
+        (pick_video(&all, prefs), pick_audio(&all, prefs))
     };
     if video.is_none() && data.hls_manifest_url.is_none() {
         return Err(anyhow!(

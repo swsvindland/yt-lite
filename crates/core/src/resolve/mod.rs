@@ -56,6 +56,9 @@ pub struct Prefs {
     /// Video codec preference, best first, applied after quality and fps.
     /// Families: `avc1`, `vp9`, `av01`.
     pub codecs: Vec<String>,
+    /// Only consider audio streams of this MIME type, e.g. `audio/mp4` for
+    /// players that can't decode Opus/WebM (iOS AVPlayer).
+    pub audio_mime: Option<String>,
 }
 
 impl Default for Prefs {
@@ -65,6 +68,7 @@ impl Default for Prefs {
             // H.264 decodes in hardware everywhere; YouTube only offers it up
             // to 1080p, so higher tiers pick VP9/AV1 automatically.
             codecs: vec!["avc1".into(), "vp9".into(), "av01".into()],
+            audio_mime: None,
         }
     }
 }

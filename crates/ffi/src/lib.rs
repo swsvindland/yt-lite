@@ -96,10 +96,11 @@ impl From<VideoRow> for Video {
 
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Playable {
-    /// HLS master playlist for AVPlayer.
+    /// HLS master playlist (video), or an AAC audio stream (audio only).
     pub url: String,
     pub title: String,
     pub is_live: bool,
+    pub audio_only: bool,
 }
 
 #[derive(uniffi::Object)]
@@ -235,23 +236,33 @@ impl YtLite {
         Ok(self.services.db.set_watched(&id, watched)?)
     }
 
-    /// Resolves the HLS stream natively (no yt-dlp on iOS).
-    pub fn play(&self, id: String, max_height: u32) -> Result<Playable> {
+    /// Resolves streams natively (no yt-dlp on iOS). Video: the HLS master
+    /// playlist. `audio_only`: the AAC audio stream, which AVPlayer plays
+    /// in the background with no video decoding (podcasts). Live streams are
+    /// always HLS.
+    pub fn play(&self, id: String, max_height: u32, audio_only: bool) -> Result<Playable> {
         let prefs = Prefs {
             max_tier: max_height,
+            // AVPlayer can't decode Opus/WebM.
+            audio_mime: Some("audio/mp4".into()),
             ..Prefs::default()
         };
         let r = self.resolver.resolve(&id, &prefs)?;
-        let url = r
-            .hls
-            .clone()
-            .ok_or_else(|| FfiError::Failed {
-                message: "YouTube returned no HLS stream for this video".into(),
-            })?;
+        let audio_url = r.audio.as_ref().map(|a| a.url.clone()).filter(|_| audio_only && !r.is_live);
+        let (url, audio_only) = match (audio_url, r.hls.clone()) {
+            (Some(audio), _) => (audio, true),
+            (None, Some(hls)) => (hls, false),
+            (None, None) => {
+                return Err(FfiError::Failed {
+                    message: "YouTube returned no playable stream for this video".into(),
+                });
+            }
+        };
         Ok(Playable {
             url,
             title: r.title,
             is_live: r.is_live,
+            audio_only,
         })
     }
 }

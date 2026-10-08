@@ -1,1 +1,4 @@
 /target
+
+# Local configs may hold OAuth credentials
+/config.toml

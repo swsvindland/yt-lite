@@ -103,7 +103,7 @@ You can skip OAuth entirely and list channel ids in `feed.extra_channels`; see b
 ## Configuration
 
 `%APPDATA%\yt-lite\config\config.toml` (created with defaults on first run; the gear button
-opens its folder). Restart the app after editing.
+opens its folder). Restart the app after editing. A commented template is in `config.example.toml` in the repository.
 
 ```toml
 [google]

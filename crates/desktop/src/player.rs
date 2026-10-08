@@ -1,8 +1,13 @@
-//! Playback via an external mpv process.
+//! Playback planning. Streams are resolved natively (`yt_lite_core::resolve`,
+//! ~0.2 s), then played by one of two backends:
 //!
-//! Streams are resolved natively (`yt_lite_core::resolve`, ~0.2 s) and handed
-//! to mpv as direct URLs. If that fails (YouTube changed something, age gate,
-//! ...), mpv is started on the watch URL with yt-dlp as its resolver instead.
+//! - `system` (default): the OS media player (see `system_player`) plays the
+//!   HLS stream. Nothing to install.
+//! - `mpv`: an external mpv process gets direct URLs.
+//!
+//! If native resolution fails (YouTube changed something, age gate, ...),
+//! yt-dlp is used when installed: it supplies a URL for the system player, or
+//! acts as mpv's resolver.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -13,14 +18,22 @@ use yt_lite_core::resolve::{Prefs, Resolved, StreamResolver};
 use yt_lite_core::youtube::watch_url;
 
 use crate::config::{Paths, PlayerConfig};
+use crate::system_player::{self, PlayRequest};
 
 /// googlevideo throttles open-ended requests to roughly real-time after a
 /// short burst; bounded 10 MiB range requests run at full speed. FFmpeg's
 /// `request_size` makes mpv fetch in such chunks (mpv's ytdl_hook does the same).
 const HTTP_CHUNK_SIZE: u64 = 10 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    System,
+    Mpv,
+}
+
 #[derive(Clone)]
 pub struct Player {
+    backend: Backend,
     mpv: Option<PathBuf>,
     ytdlp: Option<PathBuf>,
     sponsorblock_script: Option<PathBuf>,
@@ -29,10 +42,19 @@ pub struct Player {
     native: Option<Arc<dyn StreamResolver>>,
 }
 
+/// How the stream URL was obtained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     Native,
     YtDlp,
+}
+
+/// Result of [`Player::prepare`].
+pub enum Prepared {
+    /// mpv was started.
+    Started(Method),
+    /// Open this in the system player (on the UI thread).
+    System(PlayRequest, Method),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,7 +98,13 @@ impl Player {
         } else {
             None
         };
+        let backend = match cfg.backend.as_str() {
+            "mpv" => Backend::Mpv,
+            _ if !system_player::SUPPORTED => Backend::Mpv,
+            _ => Backend::System,
+        };
         let me = Self {
+            backend,
             mpv: find_executable(&cfg.mpv_path),
             ytdlp: find_executable(&cfg.ytdlp_path),
             sponsorblock_script,
@@ -88,7 +116,8 @@ impl Player {
             native,
         };
         log::info!(
-            "player: mpv={:?} yt-dlp={:?} native={:?} sponsorblock={:?}",
+            "player: backend={:?} mpv={:?} yt-dlp={:?} native={:?} sponsorblock={:?}",
+            me.backend,
             me.mpv,
             me.ytdlp,
             me.native.as_ref().map(|n| n.name()),
@@ -152,8 +181,65 @@ impl Player {
         args
     }
 
+    /// Blocking (network). For the mpv backend this also starts mpv; for the
+    /// system backend it returns the request to open on the UI thread.
+    pub fn prepare(&self, video_id: &str, title: &str) -> Result<Prepared> {
+        match self.backend {
+            Backend::Mpv => self.play_mpv(video_id, title).map(Prepared::Started),
+            Backend::System => self
+                .system_request(video_id, title)
+                .map(|(req, method)| Prepared::System(req, method)),
+        }
+    }
+
+    fn system_request(&self, video_id: &str, title: &str) -> Result<(PlayRequest, Method)> {
+        let mut native_err = None;
+        if let Some(native) = &self.native {
+            let t = std::time::Instant::now();
+            match native.resolve(video_id, &self.prefs) {
+                Ok(r) if r.hls.is_some() => {
+                    log::info!("resolved {video_id} natively in {:?} (HLS)", t.elapsed());
+                    let aspect = r.video.as_ref().and_then(|v| match (v.width, v.height) {
+                        (Some(w), Some(h)) if h > 0 => Some(f64::from(w) / f64::from(h)),
+                        _ => None,
+                    });
+                    let req = PlayRequest {
+                        url: r.hls.clone().unwrap_or_default(),
+                        title: title.to_string(),
+                        max_tier: self.prefs.max_tier,
+                        aspect,
+                    };
+                    return Ok((req, Method::Native));
+                }
+                Ok(_) => native_err = Some(anyhow!("YouTube returned no HLS stream")),
+                Err(e) => native_err = Some(e),
+            }
+            if let Some(e) = &native_err {
+                log::warn!("native resolve failed for {video_id}: {e:#}");
+            }
+        }
+        let Some(ytdlp) = &self.ytdlp else {
+            return Err(match native_err {
+                Some(e) => anyhow!("{e:#}"),
+                None => anyhow!("native resolver disabled and {}", Missing::YtDlp.install_hint()),
+            });
+        };
+        let url = ytdlp_url(ytdlp, video_id, self.prefs.max_tier)
+            .map_err(|e| match native_err {
+                Some(n) => anyhow!("{n:#}; yt-dlp fallback also failed: {e:#}"),
+                None => e,
+            })?;
+        let req = PlayRequest {
+            url,
+            title: title.to_string(),
+            max_tier: self.prefs.max_tier,
+            aspect: None,
+        };
+        Ok((req, Method::YtDlp))
+    }
+
     /// Blocking (the native resolve is a network call). Starts mpv detached.
-    pub fn play(&self, video_id: &str, title: &str) -> Result<Method> {
+    pub fn play_mpv(&self, video_id: &str, title: &str) -> Result<Method> {
         let mpv = self
             .mpv
             .as_ref()
@@ -188,6 +274,38 @@ impl Player {
         spawn(mpv, self.ytdlp_args(video_id, title))?;
         Ok(Method::YtDlp)
     }
+}
+
+/// Asks yt-dlp for one URL the system player can open (HLS preferred).
+fn ytdlp_url(ytdlp: &Path, video_id: &str, max_tier: u32) -> Result<String> {
+    let mut cmd = Command::new(ytdlp);
+    cmd.args([
+        "--get-url",
+        "--no-warnings",
+        "--no-playlist",
+        "-f",
+        &format!("b[protocol^=m3u8][height<=?{max_tier}]/b[height<=?{max_tier}]/b"),
+        &watch_url(video_id),
+    ])
+    .stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| anyhow!("failed to run {}: {e}", ytdlp.display()))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(anyhow!("yt-dlp failed: {}", err.lines().last().unwrap_or("").trim()));
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("http"))
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("yt-dlp returned no URL"))
 }
 
 fn spawn(mpv: &Path, args: Vec<String>) -> Result<()> {
@@ -277,6 +395,7 @@ mod tests {
 
     fn player() -> Player {
         Player {
+            backend: Backend::Mpv,
             mpv: Some("mpv".into()),
             ytdlp: Some("/bin/yt-dlp".into()),
             sponsorblock_script: Some("/s/sponsorblock.lua".into()),
@@ -356,15 +475,24 @@ mod tests {
     fn missing_mpv_is_reported_first() {
         let mut p = player();
         p.mpv = None;
-        let err = p.play("abcdefghijk", "T").unwrap_err().to_string();
+        let err = p.play_mpv("abcdefghijk", "T").unwrap_err().to_string();
         assert!(err.contains("mpv was not found"));
+    }
+
+    #[test]
+    fn system_backend_without_native_or_ytdlp_explains() {
+        let mut p = player();
+        p.backend = Backend::System;
+        p.ytdlp = None;
+        let err = p.system_request("abcdefghijk", "T").unwrap_err().to_string();
+        assert!(err.contains("yt-dlp was not found"), "{err}");
     }
 
     #[test]
     fn no_native_and_no_ytdlp_reports_ytdlp() {
         let mut p = player();
         p.ytdlp = None;
-        let err = p.play("abcdefghijk", "T").unwrap_err().to_string();
+        let err = p.play_mpv("abcdefghijk", "T").unwrap_err().to_string();
         assert!(err.contains("yt-dlp was not found"));
     }
 }

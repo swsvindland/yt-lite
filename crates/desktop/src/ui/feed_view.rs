@@ -24,7 +24,8 @@ use crate::config::Paths;
 use crate::db::{FeedQuery, VideoRow};
 use crate::feed::FeedSource;
 use crate::feed::pipeline::{self, Services};
-use crate::player::{Method, Player};
+use crate::player::{Method, Player, Prepared};
+use crate::system_player::SystemPlayer;
 use crate::thumbs::{self, Thumbnails};
 use crate::youtube::duration::format_clock;
 use crate::{OpenConfigFolder, Refresh, ToggleHideWatched};
@@ -65,6 +66,7 @@ pub struct FeedView {
     services: Arc<Services>,
     paths: Paths,
     player: Arc<Player>,
+    system_player: SystemPlayer,
     source: Arc<dyn FeedSource>,
     cards: Rc<Vec<Card>>,
     thumbs: Thumbnails,
@@ -127,6 +129,7 @@ impl FeedView {
             services,
             paths,
             player: Arc::new(player),
+            system_player: SystemPlayer::default(),
             source,
             cards: Rc::new(Vec::new()),
             thumbs,
@@ -183,6 +186,10 @@ impl FeedView {
                     v.refresh(window, cx);
                 } else {
                     v.maybe_scroll_test(window, cx);
+                }
+                // `YT_LITE_AUTOPLAY=<video id>`: play on startup (testing aid).
+                if let Some(id) = std::env::var("YT_LITE_AUTOPLAY").ok().filter(|s| !s.is_empty()) {
+                    v.play_video(id.into(), "Autoplay".into(), window, cx);
                 }
             })
             .ok();
@@ -387,18 +394,33 @@ impl FeedView {
     fn play(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(card) = self.cards.get(ix) else { return };
         let (id, title) = (card.id.clone(), card.title.clone());
+        self.play_video(id, title, window, cx);
+    }
+
+    fn play_video(
+        &mut self,
+        id: SharedString,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let player = self.player.clone();
         self.status = format!("Opening “{title}”…").into();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let video_id = id.to_string();
-            let result = smol::unblock(move || player.play(&video_id, &title)).await;
+            let result = smol::unblock(move || player.prepare(&video_id, &title)).await;
             this.update_in(cx, |v, window, cx| {
+                // The system player must be created on the UI thread.
+                let result = result.and_then(|prepared| match prepared {
+                    Prepared::Started(method) => Ok(method),
+                    Prepared::System(req, method) => v.system_player.open(&req).map(|()| method),
+                });
                 match result {
                     Ok(method) => {
                         v.status = match method {
-                            Method::Native => "Playing in mpv".into(),
-                            Method::YtDlp => "Playing in mpv (via yt-dlp)".into(),
+                            Method::Native => "Playing".into(),
+                            Method::YtDlp => "Playing (via yt-dlp)".into(),
                         };
                         // The list may have been reloaded meanwhile; find by id.
                         if let Some(ix) = v.cards.iter().position(|c| c.id == id) {

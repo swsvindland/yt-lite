@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/desktop"]
+members = ["crates/core", "crates/desktop", "crates/winplayer"]
 default-members = ["crates/desktop", "crates/core"]
 
 [workspace.package]
@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 yt-lite-core = { path = "crates/core" }
+yt-lite-winplayer = { path = "crates/winplayer" }
 anyhow = "1"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }

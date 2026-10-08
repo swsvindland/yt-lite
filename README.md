@@ -1,16 +1,19 @@
 # yt-lite
 
 A small native desktop client for your YouTube subscriptions, built with Rust and
-[GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + gpui-component). Videos play
-in [mpv](https://mpv.io): stream URLs are resolved natively in Rust (~0.2 s), with
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) as an automatic fallback. The app never loads
-YouTube's web player or a web view.
+[GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + gpui-component). Stream URLs are
+resolved natively in Rust (~0.2 s) and played by the operating system's own media player
+(AVPlayer on macOS, the WinRT MediaPlayer on Windows), so there is nothing else to install.
+[mpv](https://mpv.io) is available as an alternative backend, and
+[yt-dlp](https://github.com/yt-dlp/yt-dlp), if installed, is a fallback resolver. The app
+never loads YouTube's web player or a web view.
 
 - Chronological subscriptions grid: thumbnail, title, channel, duration, age
 - **No Shorts, anywhere.** Filtered centrally for every feed source; the filter fails closed
-- Click a video to open it in mpv (1080p max by default); watched state is kept locally
+- Click a video to play it in a native player window (1080p max by default); watched state is
+  kept locally
 - Native stream resolver (a Rust port of the relevant part of yt-dlp), yt-dlp as fallback
-- Optional SponsorBlock via the mpv script
+- Optional SponsorBlock via the mpv script (mpv backend)
 - Low memory: virtualized grid, byte-capped thumbnail cache, idle trimming, and a live RSS readout
 
 Primary target is Windows 11; macOS is supported too (menu bar, ⌘ shortcuts, `.app` bundle).
@@ -35,11 +38,13 @@ cargo build --release
 Release builds run without a console window and log to `%LOCALAPPDATA%\yt-lite\data\yt-lite.log`.
 Debug builds (`cargo run`) log to the console.
 
-### 2. mpv (required) and yt-dlp (fallback)
+### 2. Optional: yt-dlp (fallback) and mpv (alternative player)
+
+Nothing is required to play videos. Optionally:
 
 ```powershell
-winget install shinchiro.mpv
-winget install yt-dlp.yt-dlp
+winget install yt-dlp.yt-dlp     # fallback when the native resolver fails
+winget install shinchiro.mpv     # only if you set player.backend = "mpv"
 ```
 
 or with scoop:
@@ -58,8 +63,8 @@ YouTube changes often break old versions of either.
 ## Setup (macOS)
 
 ```sh
-brew install mpv yt-dlp
 scripts/bundle-macos.sh --install     # builds target/release/yt-lite.app, copies to /Applications
+brew install yt-dlp                   # optional fallback resolver (and mpv, for the mpv backend)
 ```
 
 Any Xcode Command Line Tools install is enough to build. Config lives in
@@ -111,6 +116,7 @@ client_id = "1234-abc.apps.googleusercontent.com"
 client_secret = "GOCSPX-..."
 
 [player]
+backend = "system"        # "system" (built-in OS player, nothing to install) or "mpv"
 mpv_path = "mpv"          # full path, or a name found on PATH
 ytdlp_path = "yt-dlp"     # passed to mpv as ytdl_hook-ytdl_path
 max_height = 1080         # yt-dlp format: bestvideo[height<=?1080]+bestaudio
@@ -151,9 +157,10 @@ Environment variables:
 | `YT_LITE_CONFIG` | Use this config file instead |
 | `YT_LITE_HOME` | Portable mode: config, data, and cache all under this folder |
 | `YT_LITE_SCROLL_TEST=1` | Memory self-test: scroll the whole grid twice and log RSS |
+| `YT_LITE_AUTOPLAY=<id>` | Play this video on startup (testing aid) |
 | `RUST_LOG` | Log filter, e.g. `info,yt_lite=debug` |
 
-### SponsorBlock
+### SponsorBlock (mpv backend only)
 
 Download `sponsorblock.lua` from <https://github.com/po5/mpv_sponsorblock> and save it as
 `%APPDATA%\yt-lite\config\mpv-scripts\sponsorblock.lua` (or point `player.sponsorblock_script`
@@ -191,6 +198,26 @@ A video is shown only after it has a cached **not-a-Short** verdict:
 Videos with no duration yet stay hidden until enrichment fills one in. Without sign-in, the
 probe alone decides. At most 400 probes run per refresh.
 
+### Playback backends
+
+**`system` (default)** plays the HLS stream from the native resolver in the OS's own player:
+
+- **macOS:** AVPlayer in an AVKit window. Native controls, fullscreen, Picture in Picture,
+  AirPlay, hardware decoding. `crates/desktop/src/system_player/macos.rs`.
+- **Windows:** the built-in WinRT `MediaPlayer`, rendered through Windows.UI.Composition into a
+  Win32 window (`crates/winplayer`). Media keys and the Windows media flyout work. Controls:
+  Space/K or click = pause, ←/→ = 5 s, J/L = 10 s, ↑/↓ = volume, M = mute, F or double-click =
+  fullscreen, Esc = leave fullscreen. The title bar shows the time; click the bar at the bottom
+  to seek.
+
+The player window is reused for the next video. Closing it stops playback and releases the
+stream. If native resolution fails and yt-dlp is installed, yt-dlp supplies the URL instead.
+
+**`mpv`** starts an external mpv with direct URLs (or with yt-dlp as its resolver as a
+fallback). It supports the SponsorBlock script; see below.
+
+`YT_LITE_AUTOPLAY=<video id>` plays a video on startup, which is handy for testing playback.
+
 ### Native stream resolver (`crates/core/src/resolve`)
 
 A port of the part of yt-dlp's YouTube extractor that matters here (yt-dlp is public domain):
@@ -205,7 +232,9 @@ A port of the part of yt-dlp's YouTube extractor that matters here (yt-dlp is pu
    2:1 and vertical videos are handled), then fps, then `codecs` order; audio is the
    original-language track (auto-dubbed videos list several), non-DRC, best bitrate. Formats
    with a signature cipher, an `n` parameter, DRM or OTF/live fragments are never used.
-4. mpv gets the two URLs directly (`--audio-file`), with `--ytdl=no`. Two details:
+4. The system player gets the HLS master playlist (all qualities, audio included). For the mpv
+   backend, mpv gets the two adaptive URLs directly (`--audio-file`), with `--ytdl=no`. Two
+   details:
    - googlevideo **throttles open-ended requests** to about real time (measured: 150 KB/s for a
      4 Mbps stream) but serves bounded range requests at full speed (40 MB/s). mpv is told to
      fetch in 10 MiB chunks (`--stream-lavf-o-append=request_size=10485760`), as mpv's own
@@ -268,6 +297,11 @@ Measured on macOS (Apple Silicon, Retina, 1400×900 window), release build, 23 c
 | Thumbnail cap 20 MB, same scroll | 177–184 MB |
 | 60 s after backgrounding (idle trim) | 181 MB |
 
+With the `system` backend the player runs inside the yt-lite process, so its memory counts too:
+on macOS, RSS was 212 MB while playing a 1080p video, versus about 89 MB for the feed alone.
+The stream is released when you close the player window. With `backend = "mpv"`, playback
+memory is in mpv's process instead.
+
 On Apple Silicon each cached thumbnail counts about twice: the CPU buffer plus its GPU-atlas
 copy share unified memory. On Windows with a discrete GPU the atlas lives in VRAM, and a
 non-Retina window has much smaller swapchain buffers. **The Windows numbers have not been
@@ -308,10 +342,13 @@ crates/core/         yt-lite-core: no UI; also builds for iOS (aarch64-apple-ios
   tests/fixtures/      RSS feeds and player responses captured 2026-10-07 (URLs scrubbed)
 crates/desktop/      yt-lite: GPUI app
   src/main.rs          bootstrap, menus, shortcuts, logging, window
-  src/player.rs        mpv launch (native URLs or yt-dlp)
+  src/player.rs        playback planning: backend choice, native resolve / yt-dlp, mpv launch
+  src/system_player/   OS player: AVPlayer (macOS), winplayer (Windows)
   src/thumbs.rs        decode to display size + in-memory LRU
   src/mem.rs           RSS readout
   src/ui/              feed grid, status bar
+crates/winplayer/     Windows MediaPlayer window (pure-Rust bindings; type-checks from any host
+                     with `cargo check -p yt-lite-winplayer --target x86_64-pc-windows-msvc`)
 scripts/bundle-macos.sh
 docs/ios.md          plan for a SwiftUI iPhone app on the same core
 ```

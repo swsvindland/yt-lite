@@ -1,0 +1,32 @@
+[package]
+name = "yt-lite-winplayer"
+description = "Windows system video player for yt-lite: WinRT MediaPlayer rendered via Windows.UI.Composition into a Win32 window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Pure-Rust bindings (no C toolchain), so this crate can be type-checked from
+# any host: cargo check -p yt-lite-winplayer --target x86_64-pc-windows-msvc
+[target.'cfg(windows)'.dependencies]
+anyhow.workspace = true
+log.workspace = true
+windows-numerics = "0.3"
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Foundation_Numerics",
+    "Media_Core",
+    "Media_Playback",
+    "System",
+    "UI",
+    "UI_Composition",
+    "UI_Composition_Desktop",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Composition",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

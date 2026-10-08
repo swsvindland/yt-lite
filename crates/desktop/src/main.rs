@@ -2,6 +2,7 @@
 
 mod mem;
 mod player;
+mod system_player;
 mod thumbs;
 mod ui;
 

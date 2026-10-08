@@ -11,6 +11,7 @@ client_id = ""
 client_secret = ""
 
 [player]
+backend = "system"        # "system" (built-in OS player, nothing to install) or "mpv"
 mpv_path = "mpv"          # full path, or a name found on PATH
 ytdlp_path = "yt-dlp"     # full path, or a name found on PATH
 max_height = 1080

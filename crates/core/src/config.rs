@@ -31,6 +31,8 @@ pub struct GoogleConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PlayerConfig {
+    /// `system` (the OS media player: AVPlayer / Windows MediaPlayer) or `mpv`.
+    pub backend: String,
     /// Path to mpv, or a bare name looked up on PATH.
     pub mpv_path: String,
     /// Path to yt-dlp, or a bare name looked up on PATH.
@@ -54,6 +56,7 @@ pub struct PlayerConfig {
 impl Default for PlayerConfig {
     fn default() -> Self {
         Self {
+            backend: "system".into(),
             mpv_path: "mpv".into(),
             ytdlp_path: "yt-dlp".into(),
             max_height: 1080,
@@ -229,6 +232,7 @@ mod tests {
         let c = Config::parse(DEFAULT_CONFIG).unwrap();
         assert_eq!(c.player.max_height, 1080);
         assert_eq!(c.player.resolver, "native");
+        assert_eq!(c.player.backend, "system");
         assert_eq!(c.feed.refresh_interval_minutes, 15);
         assert_eq!(c.cache.thumb_memory_mb, 50);
         assert!(!c.has_google_client());

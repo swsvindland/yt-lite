@@ -8,7 +8,9 @@ resolved natively in Rust (~0.2 s) and played by the operating system's own medi
 [yt-dlp](https://github.com/yt-dlp/yt-dlp), if installed, is a fallback resolver. The app
 never loads YouTube's web player or a web view.
 
-- Chronological subscriptions grid: thumbnail, title, channel, duration, age
+- Sidebar with **Subscriptions** (chronological), **For you** (recommendations, no YouTube login
+  needed) and **Settings**
+- Responsive grid: thumbnail, title, channel, duration, age
 - **No Shorts, anywhere.** Filtered centrally for every feed source; the filter fails closed
 - Click a video to play it in a native player window (1080p max by default); watched state is
   kept locally
@@ -158,6 +160,7 @@ Environment variables:
 | `YT_LITE_HOME` | Portable mode: config, data, and cache all under this folder |
 | `YT_LITE_SCROLL_TEST=1` | Memory self-test: scroll the whole grid twice and log RSS |
 | `YT_LITE_AUTOPLAY=<id>` | Play this video on startup (testing aid) |
+| `YT_LITE_PAGE=foryou\|settings` | Start on that page (testing aid) |
 | `RUST_LOG` | Log filter, e.g. `info,yt_lite=debug` |
 
 ### SponsorBlock (mpv backend only)
@@ -253,9 +256,32 @@ cargo run -p yt-lite-core --example resolve -- <video id or URL> [max_height]
 When YouTube breaks it, the fix is usually updating the `VISIONOS` constants in
 `crates/core/src/resolve/innertube.rs` from yt-dlp's `INNERTUBE_CLIENTS`.
 
-### Feed sources (Phase 2 ready)
+### For you (`crates/core/src/feed/foryou.rs`)
 
-`crates/core/src/feed/mod.rs` defines the `FeedSource` trait. A source only *discovers* videos and returns
+Recommendations without signing in to YouTube. Logged out, YouTube's own home feed is empty
+("Try searching to get started"), so yt-lite builds one:
+
+1. Seeds are the 10 videos you most recently played in yt-lite, topped up with your newest
+   subscription uploads until you've watched a few.
+2. For each seed, the InnerTube `next` endpoint (WEB client, logged out) returns the related
+   videos youtube.com shows next to it.
+3. The lists are interleaved round-robin, so no single seed dominates. Duplicates, the seeds and
+   anything already watched are dropped, up to 150 videos.
+4. Listings include the duration, so the shared pipeline's Shorts filter rarely needs the Data
+   API. Shorts shelves are skipped outright.
+
+It refreshes when stale (15 min) and whenever you open the tab after playing something.
+
+### Settings
+
+Settings (sidebar, or ⌘,) edits `config.toml` in place with comments preserved. Quality, hide
+watched, feed age and theme apply immediately; the player backend, Google client, refresh
+interval and thumbnail memory apply after a restart.
+
+### Feed sources
+
+`crates/core/src/feed/mod.rs` defines the `FeedSource` trait; Subscriptions and For you are the two
+implementations. A source only *discovers* videos and returns
 them with a retention policy. `feed::pipeline::refresh` then caches, enriches, and
 Shorts-filters the output of **every** source, so a new source can't bypass the filter. The
 planned InnerTube home/recommended feed is another `FeedSource` (`FeedKind::Home`, using
@@ -346,7 +372,8 @@ crates/desktop/      yt-lite: GPUI app
   src/system_player/   OS player: AVPlayer (macOS), winplayer (Windows)
   src/thumbs.rs        decode to display size + in-memory LRU
   src/mem.rs           RSS readout
-  src/ui/              feed grid, status bar
+  src/app_state.rs     shared config / services / account state (GPUI globals)
+  src/ui/              app shell + sidebar, feed grid, settings, shared thumbnail store
 crates/winplayer/     Windows MediaPlayer window (pure-Rust bindings; type-checks from any host
                      with `cargo check -p yt-lite-winplayer --target x86_64-pc-windows-msvc`)
 scripts/bundle-macos.sh
@@ -355,8 +382,8 @@ docs/ios.md          plan for a SwiftUI iPhone app on the same core
 
 ### Phase 2 (designed for, not built)
 
-- **Home/recommended feed** via InnerTube: implement `FeedSource` for `FeedKind::Home` and add
-  a source switcher to the toolbar.
+- **Real YouTube home feed** (cookie-authenticated InnerTube), as another `FeedSource` next to
+  For you.
 - **Embedded libmpv** inside the GPUI window.
 - **iPhone app** in SwiftUI on `yt-lite-core`, see [docs/ios.md](docs/ios.md).
 - **Search.**

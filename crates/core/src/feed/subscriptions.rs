@@ -63,7 +63,10 @@ impl FeedSource for SubscriptionsSource {
             if !signed_in {
                 return Err(NotSignedIn.into());
             }
-            return Ok(Fetched { items: Vec::new(), retain: Retain::Channels(Vec::new()) });
+            return Ok(Fetched {
+                items: Vec::new(),
+                retain: Retain::Channels(Vec::new()),
+            });
         }
         let total = channels.len();
         let done = AtomicUsize::new(0);
@@ -83,7 +86,10 @@ impl FeedSource for SubscriptionsSource {
                     if !signed_in {
                         return Err(rss_err);
                     }
-                    log::warn!("RSS failed for {} ({rss_err:#}); using uploads playlist", ch.channel_id);
+                    log::warn!(
+                        "RSS failed for {} ({rss_err:#}); using uploads playlist",
+                        ch.channel_id
+                    );
                     fallbacks.fetch_add(1, Ordering::Relaxed);
                     api.recent_uploads(&ch.channel_id, &ch.title)
                 });

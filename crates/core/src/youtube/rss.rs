@@ -62,6 +62,7 @@ pub fn parse(xml: &str, channel_id: &str) -> Result<ChannelFeed> {
             title,
             published,
             link_hint: LinkHint::from_url(link),
+            duration: None,
         });
     }
     Ok(ChannelFeed {
@@ -122,7 +123,11 @@ mod tests {
     fn channel_without_shorts() {
         let feed = parse(NO_SHORTS, "UCsBjURrPoezykLs9EqgamOA").unwrap();
         assert_eq!(feed.items.len(), 15);
-        assert!(feed.items.iter().all(|i| i.link_hint == LinkHint::WatchLink));
+        assert!(
+            feed.items
+                .iter()
+                .all(|i| i.link_hint == LinkHint::WatchLink)
+        );
     }
 
     #[test]

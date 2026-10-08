@@ -54,7 +54,11 @@ impl Thumbnails {
 
     /// Records a finished load. Returns images evicted to stay under the cap;
     /// the caller must release them from the GPU atlas (`cx.drop_image`).
-    pub fn finish(&mut self, id: SharedString, result: Result<RenderImage>) -> Vec<Arc<RenderImage>> {
+    pub fn finish(
+        &mut self,
+        id: SharedString,
+        result: Result<RenderImage>,
+    ) -> Vec<Arc<RenderImage>> {
         self.pending.remove(&id);
         match result {
             Ok(img) => {
@@ -97,7 +101,13 @@ fn image_bytes(img: &RenderImage) -> usize {
 }
 
 /// Blocking: disk cache or network, then decode to at most `max_w`x`max_h`.
-pub fn load(http: &Http, dir: &Path, video_id: &str, max_w: u32, max_h: u32) -> Result<RenderImage> {
+pub fn load(
+    http: &Http,
+    dir: &Path,
+    video_id: &str,
+    max_w: u32,
+    max_h: u32,
+) -> Result<RenderImage> {
     decode(&thumbcache::fetch(http, dir, video_id)?, max_w, max_h)
 }
 
@@ -154,7 +164,9 @@ mod tests {
         let decode = |_: &[u8], _, _| -> Result<RenderImage> {
             // A synthetic image weighing exactly `one` bytes.
             let side = ((one / 4) as f64).sqrt() as u32;
-            Ok(RenderImage::new(vec![Frame::new(image::RgbaImage::new(side, side))]))
+            Ok(RenderImage::new(vec![Frame::new(image::RgbaImage::new(
+                side, side,
+            ))]))
         };
         let one = {
             let img = decode(&[], 0, 0).unwrap();
@@ -193,5 +205,4 @@ mod tests {
         t.clear_failures();
         assert!(t.begin_load(&id));
     }
-
 }

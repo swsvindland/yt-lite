@@ -41,8 +41,13 @@ pub fn prune_disk(dir: &Path, cap_bytes: u64) -> Result<usize> {
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let meta = e.metadata().ok()?;
-            meta.is_file()
-                .then(|| (e.path(), meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)))
+            meta.is_file().then(|| {
+                (
+                    e.path(),
+                    meta.len(),
+                    meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                )
+            })
         })
         .collect();
     let victims = select_for_deletion(files, cap_bytes);
@@ -79,11 +84,21 @@ mod tests {
             (PathBuf::from("old"), 40, t0),
             (PathBuf::from("mid"), 40, t0 + Duration::from_secs(10)),
         ];
-        assert_eq!(select_for_deletion(files.clone(), 120), Vec::<PathBuf>::new());
-        assert_eq!(select_for_deletion(files.clone(), 80), vec![PathBuf::from("old")]);
+        assert_eq!(
+            select_for_deletion(files.clone(), 120),
+            Vec::<PathBuf>::new()
+        );
+        assert_eq!(
+            select_for_deletion(files.clone(), 80),
+            vec![PathBuf::from("old")]
+        );
         assert_eq!(
             select_for_deletion(files, 10),
-            vec![PathBuf::from("old"), PathBuf::from("mid"), PathBuf::from("new")]
+            vec![
+                PathBuf::from("old"),
+                PathBuf::from("mid"),
+                PathBuf::from("new")
+            ]
         );
     }
 }

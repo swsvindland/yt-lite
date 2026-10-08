@@ -206,13 +206,78 @@ impl Config {
             std::fs::write(path, DEFAULT_CONFIG)
                 .with_context(|| format!("writing default config to {}", path.display()))?;
         }
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         Self::parse(&text).with_context(|| format!("parsing {}", path.display()))
     }
 
     pub fn parse(text: &str) -> Result<Self> {
         Ok(toml::from_str(text)?)
+    }
+
+    /// Writes the user-editable settings back into `path`, preserving the
+    /// file's comments and anything not managed here.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        use toml_edit::{DocumentMut, Item, Table};
+        let text = std::fs::read_to_string(path).unwrap_or_else(|_| DEFAULT_CONFIG.to_string());
+        let mut doc: DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {}", path.display()))?;
+        let mut set = |section: &str, key: &str, v: toml_edit::Value| {
+            if !doc.contains_table(section) {
+                doc[section] = Item::Table(Table::new());
+            }
+            // Keep a trailing comment on the line, if any.
+            let decor = doc[section]
+                .get(key)
+                .and_then(|i| i.as_value())
+                .map(|v| v.decor().clone());
+            let mut v = v;
+            if let Some(decor) = decor {
+                *v.decor_mut() = decor;
+            }
+            doc[section][key] = Item::Value(v);
+        };
+        set("google", "client_id", self.google.client_id.as_str().into());
+        set(
+            "google",
+            "client_secret",
+            self.google.client_secret.as_str().into(),
+        );
+        set("player", "backend", self.player.backend.as_str().into());
+        set(
+            "player",
+            "max_height",
+            i64::from(self.player.max_height).into(),
+        );
+        set("player", "sponsorblock", self.player.sponsorblock.into());
+        set(
+            "feed",
+            "refresh_interval_minutes",
+            (self.feed.refresh_interval_minutes as i64).into(),
+        );
+        set(
+            "feed",
+            "max_age_days",
+            i64::from(self.feed.max_age_days).into(),
+        );
+        set("feed", "hide_watched", self.feed.hide_watched.into());
+        set(
+            "cache",
+            "thumb_memory_mb",
+            (self.cache.thumb_memory_mb as i64).into(),
+        );
+        set(
+            "cache",
+            "thumb_disk_mb",
+            (self.cache.thumb_disk_mb as i64).into(),
+        );
+        set("ui", "show_memory", self.ui.show_memory.into());
+        set("ui", "dark", self.ui.dark.into());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
     }
 
     pub fn has_google_client(&self) -> bool {
@@ -244,6 +309,37 @@ mod tests {
         assert_eq!(c.player.max_height, 720);
         assert_eq!(c.player.mpv_path, "mpv");
         assert_eq!(c.feed.max_items, 1000);
+    }
+
+    #[test]
+    fn save_round_trips_and_keeps_comments() {
+        let dir = std::env::temp_dir().join(format!("yt-lite-test-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, DEFAULT_CONFIG).unwrap();
+        let mut c = Config::parse(DEFAULT_CONFIG).unwrap();
+        c.player.max_height = 720;
+        c.feed.hide_watched = true;
+        c.google.client_id = "abc.apps.googleusercontent.com".into();
+        c.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("# yt-lite configuration"),
+            "header comment kept"
+        );
+        assert!(
+            text.contains("# full path, or a name found on PATH"),
+            "inline comment kept"
+        );
+        let back = Config::parse(&text).unwrap();
+        assert_eq!(back.player.max_height, 720);
+        assert!(back.feed.hide_watched);
+        assert_eq!(back.google.client_id, "abc.apps.googleusercontent.com");
+        assert_eq!(
+            back.player.codecs, c.player.codecs,
+            "unmanaged keys untouched"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

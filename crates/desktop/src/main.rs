@@ -1,5 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod app_state;
 mod mem;
 mod player;
 mod system_player;
@@ -19,16 +20,21 @@ use auth::Auth;
 use config::{Config, Paths};
 use db::Db;
 use feed::pipeline::Services;
-use feed::subscriptions::SubscriptionsSource;
 use net::Http;
+use player::Player;
+use ui::app_view::AppView;
 use yt_lite_core::resolve::StreamResolver;
 use yt_lite_core::resolve::innertube::InnertubeResolver;
-use player::Player;
-use ui::feed_view::FeedView;
 
 actions!(
     yt_lite,
-    [Quit, CloseWindow, Refresh, ToggleHideWatched, OpenConfigFolder]
+    [
+        Quit,
+        CloseWindow,
+        Refresh,
+        ToggleHideWatched,
+        OpenConfigFolder
+    ]
 );
 
 /// Menu bar (macOS) and shortcuts. `secondary` is Cmd on macOS, Ctrl elsewhere.
@@ -42,14 +48,14 @@ fn init_menus(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-w", CloseWindow, None),
-        KeyBinding::new("secondary-r", Refresh, Some("FeedView")),
-        KeyBinding::new("f5", Refresh, Some("FeedView")),
-        KeyBinding::new("secondary-shift-h", ToggleHideWatched, Some("FeedView")),
-        KeyBinding::new("secondary-,", OpenConfigFolder, Some("FeedView")),
+        KeyBinding::new("secondary-r", Refresh, None),
+        KeyBinding::new("f5", Refresh, None),
+        KeyBinding::new("secondary-shift-h", ToggleHideWatched, None),
+        KeyBinding::new("secondary-,", OpenConfigFolder, None),
     ]);
     cx.set_menus([
         Menu::new("yt-lite").items([
-            MenuItem::action("Open Config Folder…", OpenConfigFolder),
+            MenuItem::action("Settings…", OpenConfigFolder),
             MenuItem::separator(),
             MenuItem::action("Quit yt-lite", Quit),
         ]),
@@ -74,8 +80,8 @@ fn init_logging(paths: &Paths) {
     );
     // Windows release builds have no console, and a macOS .app launched from
     // Finder has no visible stderr: log to a file instead.
-    let in_app_bundle = std::env::current_exe()
-        .is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"));
+    let in_app_bundle =
+        std::env::current_exe().is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"));
     if cfg!(all(windows, not(debug_assertions))) || in_app_bundle {
         let _ = std::fs::create_dir_all(&paths.data_dir);
         if let Ok(file) = std::fs::File::create(paths.data_dir.join("yt-lite.log")) {
@@ -101,7 +107,7 @@ fn main() -> anyhow::Result<()> {
         auth: Auth::new(config.google.clone(), http.clone()),
         http,
         db,
-        config,
+        config: config.clone(),
     });
     mem::log_now("startup");
 
@@ -109,10 +115,21 @@ fn main() -> anyhow::Result<()> {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
-            Theme::change(if dark { ThemeMode::Dark } else { ThemeMode::Light }, None, cx);
+            Theme::change(
+                if dark {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                },
+                None,
+                cx,
+            );
+            cx.set_global(app_state::AppConfig { config, paths });
+            cx.set_global(app_state::AppServices(services));
+            cx.set_global(app_state::Account::default());
             init_menus(cx);
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1400.), px(900.)), cx)),
+                window_bounds: Some(WindowBounds::centered(size(px(1440.), px(920.)), cx)),
                 titlebar: Some(TitlebarOptions {
                     title: Some("yt-lite".into()),
                     ..Default::default()
@@ -120,16 +137,7 @@ fn main() -> anyhow::Result<()> {
                 ..Default::default()
             };
             gpui_kit::open_window(options, cx, |window, cx| {
-                cx.new(|cx| {
-                    FeedView::new(
-                        services,
-                        paths,
-                        player,
-                        Arc::new(SubscriptionsSource),
-                        window,
-                        cx,
-                    )
-                })
+                cx.new(|cx| AppView::new(player, window, cx))
             })
             .expect("failed to open window");
             cx.activate(true);

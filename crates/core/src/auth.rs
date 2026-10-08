@@ -88,9 +88,10 @@ impl Auth {
     /// Returns a valid access token, refreshing it if needed. Blocking.
     pub fn access_token(&self) -> Result<String> {
         if let Some((tok, expires)) = self.access.lock().unwrap().as_ref()
-            && Instant::now() + Duration::from_secs(60) < *expires {
-                return Ok(tok.clone());
-            }
+            && Instant::now() + Duration::from_secs(60) < *expires
+        {
+            return Ok(tok.clone());
+        }
         let refresh = Self::refresh_token()?.ok_or(NotSignedIn)?;
         let resp: TokenResponse = self
             .http
@@ -106,7 +107,9 @@ impl Auth {
             .map_err(|e| {
                 // invalid_grant: revoked, or expired (7-day limit while the
                 // OAuth app is in "Testing" status). Force a new sign-in.
-                if e.to_string().contains("expired or revoked") || e.to_string().contains("invalid_grant") {
+                if e.to_string().contains("expired or revoked")
+                    || e.to_string().contains("invalid_grant")
+                {
                     let _ = self.sign_out();
                     anyhow!(NotSignedIn).context(format!("refresh token rejected: {e}"))
                 } else {
@@ -187,7 +190,8 @@ impl Auth {
     /// 5 minutes) for Google to redirect back to a loopback port.
     #[cfg(feature = "loopback-auth")]
     pub fn sign_in(&self) -> Result<()> {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").context("binding loopback port")?;
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").context("binding loopback port")?;
         let redirect_uri = format!("http://127.0.0.1:{}", listener.local_addr()?.port());
         let request = self.begin_sign_in(&redirect_uri)?;
         log::info!("opening browser for Google sign-in");
@@ -244,7 +248,10 @@ mod loopback {
     }
 
     /// Returns `None` for unrelated requests (e.g. /favicon.ico).
-    fn handle_redirect(mut stream: TcpStream, expected_state: &str) -> Result<Option<Result<String>>> {
+    fn handle_redirect(
+        mut stream: TcpStream,
+        expected_state: &str,
+    ) -> Result<Option<Result<String>>> {
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         let mut line = String::new();
         BufReader::new(&stream).read_line(&mut line)?;

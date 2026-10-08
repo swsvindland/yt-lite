@@ -11,7 +11,9 @@ use yt_lite_core::resolve::{Prefs, StreamResolver};
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let input = args.next().expect("usage: resolve <video id or URL> [max_tier]");
+    let input = args
+        .next()
+        .expect("usage: resolve <video id or URL> [max_tier]");
     let id = yt_lite_core::youtube::parse_video_id(&input).unwrap_or(input);
     let prefs = Prefs {
         max_tier: args.next().map(|s| s.parse()).transpose()?.unwrap_or(1080),
@@ -26,7 +28,13 @@ fn main() -> anyhow::Result<()> {
         match s {
             Some(s) => println!(
                 "{kind}: itag {} {} {} {:?}p {:?}fps {} kbps\n  {}",
-                s.itag, s.mime, s.codecs, s.tier, s.fps, s.bitrate / 1000, s.url
+                s.itag,
+                s.mime,
+                s.codecs,
+                s.tier,
+                s.fps,
+                s.bitrate / 1000,
+                s.url
             ),
             None => println!("{kind}: none"),
         }

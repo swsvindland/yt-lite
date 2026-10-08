@@ -82,7 +82,11 @@ impl Missing {
 
 impl Player {
     /// `native` is `None` when `player.resolver = "yt-dlp"`.
-    pub fn detect(cfg: &PlayerConfig, paths: &Paths, native: Option<Arc<dyn StreamResolver>>) -> Self {
+    pub fn detect(
+        cfg: &PlayerConfig,
+        paths: &Paths,
+        native: Option<Arc<dyn StreamResolver>>,
+    ) -> Self {
         let sponsorblock_script = if cfg.sponsorblock {
             let p = if cfg.sponsorblock_script.trim().is_empty() {
                 paths.default_sponsorblock_script()
@@ -92,7 +96,10 @@ impl Player {
             if p.is_file() {
                 Some(p)
             } else {
-                log::warn!("sponsorblock enabled but script not found at {}", p.display());
+                log::warn!(
+                    "sponsorblock enabled but script not found at {}",
+                    p.display()
+                );
                 None
             }
         } else {
@@ -174,7 +181,10 @@ impl Player {
             h = self.prefs.max_tier
         ));
         if let Some(ytdlp) = &self.ytdlp {
-            args.push(format!("--script-opts=ytdl_hook-ytdl_path={}", ytdlp.display()));
+            args.push(format!(
+                "--script-opts=ytdl_hook-ytdl_path={}",
+                ytdlp.display()
+            ));
         }
         args.extend(self.extra_args.iter().cloned());
         args.push(watch_url(video_id));
@@ -183,10 +193,13 @@ impl Player {
 
     /// Blocking (network). For the mpv backend this also starts mpv; for the
     /// system backend it returns the request to open on the UI thread.
-    pub fn prepare(&self, video_id: &str, title: &str) -> Result<Prepared> {
-        match self.backend {
-            Backend::Mpv => self.play_mpv(video_id, title).map(Prepared::Started),
-            Backend::System => self
+    /// `max_tier` overrides the configured quality (it can change at runtime).
+    pub fn prepare(&self, video_id: &str, title: &str, max_tier: u32) -> Result<Prepared> {
+        let mut this = self.clone();
+        this.prefs.max_tier = max_tier;
+        match this.backend {
+            Backend::Mpv => this.play_mpv(video_id, title).map(Prepared::Started),
+            Backend::System => this
                 .system_request(video_id, title)
                 .map(|(req, method)| Prepared::System(req, method)),
         }
@@ -221,11 +234,14 @@ impl Player {
         let Some(ytdlp) = &self.ytdlp else {
             return Err(match native_err {
                 Some(e) => anyhow!("{e:#}"),
-                None => anyhow!("native resolver disabled and {}", Missing::YtDlp.install_hint()),
+                None => anyhow!(
+                    "native resolver disabled and {}",
+                    Missing::YtDlp.install_hint()
+                ),
             });
         };
-        let url = ytdlp_url(ytdlp, video_id, self.prefs.max_tier)
-            .map_err(|e| match native_err {
+        let url =
+            ytdlp_url(ytdlp, video_id, self.prefs.max_tier).map_err(|e| match native_err {
                 Some(n) => anyhow!("{n:#}; yt-dlp fallback also failed: {e:#}"),
                 None => e,
             })?;
@@ -252,7 +268,9 @@ impl Player {
                     log::info!(
                         "resolved {video_id} natively in {:?}: video {:?} audio {:?} live {}",
                         t.elapsed(),
-                        r.video.as_ref().map(|v| (v.itag, v.tier, v.codecs.as_str())),
+                        r.video
+                            .as_ref()
+                            .map(|v| (v.itag, v.tier, v.codecs.as_str())),
                         r.audio.as_ref().map(|a| (a.itag, a.codecs.as_str())),
                         r.is_live
                     );
@@ -260,7 +278,9 @@ impl Player {
                     return Ok(Method::Native);
                 }
                 Err(e) => {
-                    log::warn!("native resolve failed for {video_id}, falling back to yt-dlp: {e:#}");
+                    log::warn!(
+                        "native resolve failed for {video_id}, falling back to yt-dlp: {e:#}"
+                    );
                     native_err = Some(e);
                 }
             }
@@ -298,7 +318,10 @@ fn ytdlp_url(ytdlp: &Path, video_id: &str, max_tier: u32) -> Result<String> {
         .map_err(|e| anyhow!("failed to run {}: {e}", ytdlp.display()))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(anyhow!("yt-dlp failed: {}", err.lines().last().unwrap_or("").trim()));
+        return Err(anyhow!(
+            "yt-dlp failed: {}",
+            err.lines().last().unwrap_or("").trim()
+        ));
     }
     String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -379,7 +402,12 @@ fn extra_search_dirs() -> Vec<PathBuf> {
             dirs.push(PathBuf::from(&home).join("scoop").join("shims"));
         }
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-            dirs.push(PathBuf::from(&local).join("Microsoft").join("WinGet").join("Links"));
+            dirs.push(
+                PathBuf::from(&local)
+                    .join("Microsoft")
+                    .join("WinGet")
+                    .join("Links"),
+            );
         }
     } else {
         dirs.push("/opt/homebrew/bin".into());
@@ -430,7 +458,10 @@ mod tests {
         assert!(args.contains(&"--script-opts=ytdl_hook-ytdl_path=/bin/yt-dlp".to_string()));
         assert!(args.contains(&"--script=/s/sponsorblock.lua".to_string()));
         assert!(args.contains(&"--volume=50".to_string()));
-        assert_eq!(args.last().unwrap(), "https://www.youtube.com/watch?v=abcdefghijk");
+        assert_eq!(
+            args.last().unwrap(),
+            "https://www.youtube.com/watch?v=abcdefghijk"
+        );
     }
 
     #[test]
@@ -447,9 +478,12 @@ mod tests {
         let args = player().native_args(&r, "T");
         assert!(args.contains(&"--ytdl=no".to_string()));
         assert!(args.contains(&"--stream-lavf-o-append=request_size=10485760".to_string()));
-        assert!(args.contains(
-            &"--http-header-fields=Referer: https://www.youtube.com/watch?v=abcdefghijk".to_string()
-        ));
+        assert!(
+            args.contains(
+                &"--http-header-fields=Referer: https://www.youtube.com/watch?v=abcdefghijk"
+                    .to_string()
+            )
+        );
         assert!(args.contains(&"--audio-file=https://v.example/audio".to_string()));
         assert_eq!(args.last().unwrap(), "https://v.example/video");
         assert!(!args.iter().any(|a| a.contains("hls")));
@@ -484,7 +518,10 @@ mod tests {
         let mut p = player();
         p.backend = Backend::System;
         p.ytdlp = None;
-        let err = p.system_request("abcdefghijk", "T").unwrap_err().to_string();
+        let err = p
+            .system_request("abcdefghijk", "T")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("yt-dlp was not found"), "{err}");
     }
 

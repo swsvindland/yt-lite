@@ -29,6 +29,20 @@ fn parse_units(part: &str, units: &[(char, u64)]) -> Option<u64> {
     num.is_empty().then_some(total)
 }
 
+/// `"20:33"` / `"1:02:03"` -> seconds.
+pub fn parse_clock(s: &str) -> Option<u32> {
+    let parts: Vec<&str> = s.trim().split(':').collect();
+    if parts.len() < 2 || parts.len() > 3 {
+        return None;
+    }
+    parts.iter().try_fold(0u32, |acc, p| {
+        if p.is_empty() || !p.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        Some(acc * 60 + p.parse::<u32>().ok()?)
+    })
+}
+
 /// `1:02:03`, `12:34`, `0:45`.
 pub fn format_clock(secs: u32) -> String {
     let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
@@ -60,6 +74,16 @@ mod tests {
         assert_eq!(parse_iso8601("1H"), None);
         assert_eq!(parse_iso8601("PT5X"), None);
         assert_eq!(parse_iso8601("PT5"), None);
+    }
+
+    #[test]
+    fn parses_clock() {
+        assert_eq!(parse_clock("20:33"), Some(1233));
+        assert_eq!(parse_clock("1:02:03"), Some(3723));
+        assert_eq!(parse_clock("0:45"), Some(45));
+        assert_eq!(parse_clock("LIVE"), None);
+        assert_eq!(parse_clock("12"), None);
+        assert_eq!(parse_clock("1::2"), None);
     }
 
     #[test]

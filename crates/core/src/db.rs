@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS channels (
 CREATE TABLE IF NOT EXISTS feed_items (
     source    TEXT NOT NULL,
     video_id  TEXT NOT NULL,
+    position  INTEGER,
     PRIMARY KEY (source, video_id)
 ) WITHOUT ROWID;
 
@@ -84,6 +85,17 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 "#;
+
+/// Upgrades databases created by older builds.
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let has_position: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('feed_items') WHERE name = 'position'")?
+        .exists([])?;
+    if !has_position {
+        conn.execute_batch("ALTER TABLE feed_items ADD COLUMN position INTEGER")?;
+    }
+    Ok(())
+}
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
@@ -104,6 +116,7 @@ impl Db {
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2000;",
         )?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -167,26 +180,39 @@ impl Db {
     /// Inserts new videos and refreshes titles of known ones. Durations and
     /// verdicts already cached are kept. Membership in `kind` is pruned
     /// according to `retain`.
-    pub fn upsert_items(&self, kind: FeedKind, items: &[FeedItem], retain: &Retain) -> Result<usize> {
+    pub fn upsert_items(
+        &self,
+        kind: FeedKind,
+        items: &[FeedItem],
+        retain: &Retain,
+    ) -> Result<usize> {
         let now = Utc::now().timestamp();
         self.with(|c| {
             let tx = c.transaction()?;
             let mut inserted = 0;
             {
+                // Listings that show an exact publish date (RSS) win over
+                // ones that only say "3y ago" (related videos).
                 let mut ins = tx.prepare(
-                    "INSERT INTO videos(id, channel_id, channel_title, title, published, link_hint, first_seen)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    "INSERT INTO videos(id, channel_id, channel_title, title, published, link_hint,
+                                        duration_secs, live, first_seen)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                      ON CONFLICT(id) DO UPDATE SET
                         title=excluded.title,
                         channel_title=excluded.channel_title,
-                        link_hint=CASE WHEN excluded.link_hint != 0 THEN excluded.link_hint ELSE videos.link_hint END",
+                        channel_id=CASE WHEN excluded.channel_id != '' THEN excluded.channel_id ELSE videos.channel_id END,
+                        link_hint=CASE WHEN excluded.link_hint != 0 THEN excluded.link_hint ELSE videos.link_hint END,
+                        duration_secs=COALESCE(videos.duration_secs, excluded.duration_secs),
+                        live=CASE WHEN videos.duration_secs IS NULL THEN excluded.live ELSE videos.live END",
                 )?;
                 // A /shorts/ link is definitive even if an earlier probe said otherwise.
                 let mut mark_short = tx.prepare("UPDATE videos SET short=1 WHERE id=?1 AND ?2=1")?;
                 let mut member = tx.prepare(
-                    "INSERT OR IGNORE INTO feed_items(source, video_id) VALUES (?1, ?2)",
+                    "INSERT INTO feed_items(source, video_id, position) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(source, video_id) DO UPDATE SET position=excluded.position",
                 )?;
-                for it in items {
+                let ordered = matches!(retain, Retain::OnlyFetched);
+                for (ix, it) in items.iter().enumerate() {
                     inserted += ins.execute(params![
                         it.video_id,
                         it.channel_id,
@@ -194,10 +220,12 @@ impl Db {
                         it.title,
                         it.published.timestamp(),
                         it.link_hint.as_db(),
+                        it.duration.map(|d| d.secs),
+                        it.duration.is_some_and(|d| d.live_or_upcoming),
                         now
                     ])?;
                     mark_short.execute(params![it.video_id, it.link_hint.as_db()])?;
-                    member.execute([kind.as_str(), &it.video_id])?;
+                    member.execute(params![kind.as_str(), it.video_id, ordered.then_some(ix as i64)])?;
                 }
             }
             tx.execute("CREATE TEMP TABLE IF NOT EXISTS keep_ids(id TEXT PRIMARY KEY)", [])?;
@@ -246,14 +274,16 @@ impl Db {
         self.with(|c| {
             let tx = c.transaction()?;
             {
-                let mut miss =
-                    tx.prepare("UPDATE videos SET enrich_attempts = enrich_attempts + 1 WHERE id=?1")?;
+                let mut miss = tx.prepare(
+                    "UPDATE videos SET enrich_attempts = enrich_attempts + 1 WHERE id=?1",
+                )?;
                 for id in requested {
                     if !details.iter().any(|d| d.id == *id) {
                         miss.execute([id])?;
                     }
                 }
-                let mut set = tx.prepare("UPDATE videos SET duration_secs=?2, live=?3 WHERE id=?1")?;
+                let mut set =
+                    tx.prepare("UPDATE videos SET duration_secs=?2, live=?3 WHERE id=?1")?;
                 for d in details {
                     set.execute(params![d.id, d.duration.secs, d.duration.live_or_upcoming])?;
                 }
@@ -299,6 +329,8 @@ impl Db {
     }
 
     /// The displayable feed: only videos with a cached NotShort verdict.
+    /// Ordered feeds (For you) keep their fetched order and ignore
+    /// `max_age_days`; others are newest first.
     pub fn feed(&self, q: FeedQuery) -> Result<Vec<VideoRow>> {
         let cutoff = Utc::now().timestamp() - i64::from(q.max_age_days) * 86_400;
         self.with(|c| {
@@ -306,9 +338,10 @@ impl Db {
                 "SELECT v.id, v.title, v.channel_title, v.published, v.duration_secs, v.live,
                         v.watched_at IS NOT NULL
                  FROM feed_items f JOIN videos v ON v.id = f.video_id
-                 WHERE f.source = ?1 AND v.short = 0 AND v.published >= ?2
+                 WHERE f.source = ?1 AND v.short = 0
+                   AND (f.position IS NOT NULL OR v.published >= ?2)
                    AND (?3 = 0 OR v.watched_at IS NULL)
-                 ORDER BY v.published DESC
+                 ORDER BY f.position ASC NULLS LAST, v.published DESC
                  LIMIT ?4",
             )?;
             stmt.query_map(
@@ -329,11 +362,43 @@ impl Db {
         })
     }
 
+    /// Most recently watched video ids (seeds for For you).
+    pub fn recently_watched(&self, limit: u32) -> Result<Vec<String>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT id FROM videos WHERE watched_at IS NOT NULL ORDER BY watched_at DESC LIMIT ?1",
+            )?;
+            stmt.query_map([limit], |r| r.get(0))?.collect()
+        })
+    }
+
+    /// Newest displayable videos of a feed (fallback seeds).
+    pub fn newest_in_feed(&self, kind: FeedKind, limit: u32) -> Result<Vec<String>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT v.id FROM feed_items f JOIN videos v ON v.id = f.video_id
+                 WHERE f.source = ?1 AND v.short = 0 ORDER BY v.published DESC LIMIT ?2",
+            )?;
+            stmt.query_map(params![kind.as_str(), limit], |r| r.get(0))?
+                .collect()
+        })
+    }
+
+    pub fn watched_ids(&self) -> Result<std::collections::HashSet<String>> {
+        self.with(|c| {
+            let mut stmt = c.prepare("SELECT id FROM videos WHERE watched_at IS NOT NULL")?;
+            stmt.query_map([], |r| r.get(0))?.collect()
+        })
+    }
+
     pub fn set_watched(&self, id: &str, watched: bool) -> Result<()> {
         let ts = watched.then(|| Utc::now().timestamp());
         self.with(|c| {
-            c.execute("UPDATE videos SET watched_at=?2 WHERE id=?1", params![id, ts])
-                .map(drop)
+            c.execute(
+                "UPDATE videos SET watched_at=?2 WHERE id=?1",
+                params![id, ts],
+            )
+            .map(drop)
         })
     }
 
@@ -360,6 +425,7 @@ mod tests {
             title: format!("{id} title"),
             published: Utc::now() - Duration::days(age_days),
             link_hint: hint,
+            duration: None,
         }
     }
 
@@ -390,20 +456,32 @@ mod tests {
         assert!(db.feed(query()).unwrap().is_empty());
         assert_eq!(db.short_ids().unwrap(), vec!["short"]);
 
-        db.set_verdicts(&[("long".into(), Verdict::NotShort)]).unwrap();
+        db.set_verdicts(&[("long".into(), Verdict::NotShort)])
+            .unwrap();
         let feed = db.feed(query()).unwrap();
-        assert_eq!(feed.iter().map(|v| v.id.as_str()).collect::<Vec<_>>(), vec!["long"]);
+        assert_eq!(
+            feed.iter().map(|v| v.id.as_str()).collect::<Vec<_>>(),
+            vec!["long"]
+        );
     }
 
     #[test]
     fn shorts_link_overrides_previous_verdict() {
         let db = Db::open_in_memory().unwrap();
         let chans = Retain::Channels(vec!["UC1".to_string()]);
-        db.upsert_items(FeedKind::Subscriptions, &[item("v", "UC1", LinkHint::None, 1)], &chans)
-            .unwrap();
+        db.upsert_items(
+            FeedKind::Subscriptions,
+            &[item("v", "UC1", LinkHint::None, 1)],
+            &chans,
+        )
+        .unwrap();
         db.set_verdicts(&[("v".into(), Verdict::NotShort)]).unwrap();
-        db.upsert_items(FeedKind::Subscriptions, &[item("v", "UC1", LinkHint::ShortsLink, 1)], &chans)
-            .unwrap();
+        db.upsert_items(
+            FeedKind::Subscriptions,
+            &[item("v", "UC1", LinkHint::ShortsLink, 1)],
+            &chans,
+        )
+        .unwrap();
         assert!(db.feed(query()).unwrap().is_empty());
     }
 
@@ -422,7 +500,11 @@ mod tests {
         )
         .unwrap();
         let ids = db.ids_needing_details(50).unwrap();
-        assert_eq!(ids, vec!["a", "gone"], "shorts-linked videos need no details");
+        assert_eq!(
+            ids,
+            vec!["a", "gone"],
+            "shorts-linked videos need no details"
+        );
         let details = vec![VideoDetails {
             id: "a".into(),
             duration: DurationInfo {
@@ -460,10 +542,24 @@ mod tests {
             ("old".into(), Verdict::NotShort),
         ])
         .unwrap();
-        assert_eq!(db.feed(query()).unwrap().len(), 2, "old video is past max_age");
+        assert_eq!(
+            db.feed(query()).unwrap().len(),
+            2,
+            "old video is past max_age"
+        );
 
-        db.upsert_items(FeedKind::Subscriptions, &[], &Retain::Channels(vec!["UC1".into()])).unwrap();
-        let ids: Vec<_> = db.feed(query()).unwrap().into_iter().map(|v| v.id).collect();
+        db.upsert_items(
+            FeedKind::Subscriptions,
+            &[],
+            &Retain::Channels(vec!["UC1".into()]),
+        )
+        .unwrap();
+        let ids: Vec<_> = db
+            .feed(query())
+            .unwrap()
+            .into_iter()
+            .map(|v| v.id)
+            .collect();
         assert_eq!(ids, vec!["a"]);
 
         db.set_watched("a", true).unwrap();
@@ -478,30 +574,123 @@ mod tests {
     #[test]
     fn only_fetched_replaces_membership() {
         let db = Db::open_in_memory().unwrap();
-        db.upsert_items(FeedKind::Home, &[item("a", "UC1", LinkHint::None, 1)], &Retain::OnlyFetched)
-            .unwrap();
-        db.upsert_items(FeedKind::Home, &[item("b", "UC2", LinkHint::None, 1)], &Retain::OnlyFetched)
-            .unwrap();
-        db.set_verdicts(&[("a".into(), Verdict::NotShort), ("b".into(), Verdict::NotShort)])
-            .unwrap();
+        db.upsert_items(
+            FeedKind::Home,
+            &[item("a", "UC1", LinkHint::None, 1)],
+            &Retain::OnlyFetched,
+        )
+        .unwrap();
+        db.upsert_items(
+            FeedKind::Home,
+            &[item("b", "UC2", LinkHint::None, 1)],
+            &Retain::OnlyFetched,
+        )
+        .unwrap();
+        db.set_verdicts(&[
+            ("a".into(), Verdict::NotShort),
+            ("b".into(), Verdict::NotShort),
+        ])
+        .unwrap();
         let mut q = query();
         q.kind = FeedKind::Home;
         let ids: Vec<_> = db.feed(q).unwrap().into_iter().map(|v| v.id).collect();
         assert_eq!(ids, vec!["b"]);
+
+        // Fetched order is kept and old videos are not age-filtered.
+        db.upsert_items(
+            FeedKind::Home,
+            &[
+                item("old", "UC1", LinkHint::None, 900),
+                item("a", "UC1", LinkHint::None, 1),
+            ],
+            &Retain::OnlyFetched,
+        )
+        .unwrap();
+        db.set_verdicts(&[("old".into(), Verdict::NotShort)])
+            .unwrap();
+        let ids: Vec<_> = db.feed(q).unwrap().into_iter().map(|v| v.id).collect();
+        assert_eq!(ids, vec!["old", "a"]);
         // Other sources are unaffected.
         assert!(db.feed(query()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn listing_durations_are_stored_and_skip_enrichment() {
+        let db = Db::open_in_memory().unwrap();
+        let mut it = item("d", "UC1", LinkHint::WatchLink, 1);
+        it.duration = Some(DurationInfo {
+            secs: 900,
+            live_or_upcoming: false,
+        });
+        db.upsert_items(FeedKind::Home, &[it], &Retain::OnlyFetched)
+            .unwrap();
+        assert!(db.ids_needing_details(10).unwrap().is_empty());
+        assert_eq!(db.unclassified(10).unwrap()[0].duration.unwrap().secs, 900);
+    }
+
+    #[test]
+    fn migrates_old_feed_items_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE feed_items (source TEXT NOT NULL, video_id TEXT NOT NULL,
+             PRIMARY KEY (source, video_id)) WITHOUT ROWID;",
+        )
+        .unwrap();
+        let db = Db::init(conn).unwrap();
+        db.upsert_items(
+            FeedKind::Home,
+            &[item("a", "UC1", LinkHint::None, 1)],
+            &Retain::OnlyFetched,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn seeds() {
+        let db = Db::open_in_memory().unwrap();
+        let chans = Retain::Channels(vec!["UC1".to_string()]);
+        db.upsert_items(
+            FeedKind::Subscriptions,
+            &[
+                item("new", "UC1", LinkHint::None, 1),
+                item("older", "UC1", LinkHint::None, 5),
+            ],
+            &chans,
+        )
+        .unwrap();
+        db.set_verdicts(&[
+            ("new".into(), Verdict::NotShort),
+            ("older".into(), Verdict::NotShort),
+        ])
+        .unwrap();
+        assert_eq!(
+            db.newest_in_feed(FeedKind::Subscriptions, 1).unwrap(),
+            vec!["new"]
+        );
+        db.set_watched("older", true).unwrap();
+        assert_eq!(db.recently_watched(5).unwrap(), vec!["older"]);
+        assert!(db.watched_ids().unwrap().contains("older"));
     }
 
     #[test]
     fn subscriptions_round_trip_and_meta() {
         let db = Db::open_in_memory().unwrap();
         db.set_subscriptions(&[
-            Subscription { channel_id: "UC2".into(), title: "B".into() },
-            Subscription { channel_id: "UC1".into(), title: "A".into() },
+            Subscription {
+                channel_id: "UC2".into(),
+                title: "B".into(),
+            },
+            Subscription {
+                channel_id: "UC1".into(),
+                title: "A".into(),
+            },
         ])
         .unwrap();
-        db.set_subscriptions(&[Subscription { channel_id: "UC1".into(), title: "A2".into() }])
-            .unwrap();
+        db.set_subscriptions(&[Subscription {
+            channel_id: "UC1".into(),
+            title: "A2".into(),
+        }])
+        .unwrap();
         let subs = db.subscribed_channels().unwrap();
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].title, "A2");

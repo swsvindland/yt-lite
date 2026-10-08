@@ -134,7 +134,9 @@ pub fn pick_video(formats: &[RawFormat], prefs: &Prefs) -> Option<Stream> {
         .collect();
     let best = if within.is_empty() {
         // Nothing small enough: take the lowest tier available.
-        candidates.into_iter().min_by_key(|f| tier(f).unwrap_or(u32::MAX))
+        candidates
+            .into_iter()
+            .min_by_key(|f| tier(f).unwrap_or(u32::MAX))
     } else {
         within.into_iter().max_by(|a, b| {
             (tier(a), a.fps.unwrap_or(0))
@@ -162,7 +164,11 @@ pub fn pick_audio(formats: &[RawFormat]) -> Option<Stream> {
         })
     };
     let originals: Vec<&RawFormat> = candidates.iter().copied().filter(is_original).collect();
-    let pool = if originals.is_empty() { candidates } else { originals };
+    let pool = if originals.is_empty() {
+        candidates
+    } else {
+        originals
+    };
     pool.into_iter()
         .max_by(|a, b| {
             a.bitrate
@@ -180,10 +186,20 @@ pub fn pick_audio(formats: &[RawFormat]) -> Option<Stream> {
 mod tests {
     use super::*;
 
-    fn fmt(itag: u32, mime: &str, label: Option<&str>, w: u32, h: u32, fps: u32, bitrate: u64) -> RawFormat {
+    fn fmt(
+        itag: u32,
+        mime: &str,
+        label: Option<&str>,
+        w: u32,
+        h: u32,
+        fps: u32,
+        bitrate: u64,
+    ) -> RawFormat {
         RawFormat {
             itag,
-            url: Some(format!("https://example.googlevideo.com/videoplayback?itag={itag}")),
+            url: Some(format!(
+                "https://example.googlevideo.com/videoplayback?itag={itag}"
+            )),
             signature_cipher: None,
             mime_type: mime.into(),
             width: Some(w),
@@ -200,7 +216,13 @@ mod tests {
         }
     }
 
-    fn audio(itag: u32, mime: &str, bitrate: u64, track: Option<(&str, bool)>, drc: bool) -> RawFormat {
+    fn audio(
+        itag: u32,
+        mime: &str,
+        bitrate: u64,
+        track: Option<(&str, bool)>,
+        drc: bool,
+    ) -> RawFormat {
         RawFormat {
             width: None,
             height: None,
@@ -230,10 +252,42 @@ mod tests {
     #[test]
     fn picks_highest_tier_within_cap_preferring_codec_order() {
         let formats = vec![
-            fmt(313, r#"video/webm; codecs="vp9""#, Some("2160p"), 3840, 2160, 30, 20_000_000),
-            fmt(137, r#"video/mp4; codecs="avc1.640028""#, Some("1080p"), 1920, 1080, 30, 4_000_000),
-            fmt(248, r#"video/webm; codecs="vp9""#, Some("1080p"), 1920, 1080, 30, 2_500_000),
-            fmt(136, r#"video/mp4; codecs="avc1.4d401f""#, Some("720p"), 1280, 720, 30, 2_000_000),
+            fmt(
+                313,
+                r#"video/webm; codecs="vp9""#,
+                Some("2160p"),
+                3840,
+                2160,
+                30,
+                20_000_000,
+            ),
+            fmt(
+                137,
+                r#"video/mp4; codecs="avc1.640028""#,
+                Some("1080p"),
+                1920,
+                1080,
+                30,
+                4_000_000,
+            ),
+            fmt(
+                248,
+                r#"video/webm; codecs="vp9""#,
+                Some("1080p"),
+                1920,
+                1080,
+                30,
+                2_500_000,
+            ),
+            fmt(
+                136,
+                r#"video/mp4; codecs="avc1.4d401f""#,
+                Some("720p"),
+                1280,
+                720,
+                30,
+                2_000_000,
+            ),
         ];
         let v = pick_video(&formats, &Prefs::default()).unwrap();
         assert_eq!(v.itag, 137);
@@ -255,8 +309,24 @@ mod tests {
     #[test]
     fn higher_fps_wins_at_same_tier() {
         let formats = vec![
-            fmt(136, r#"video/mp4; codecs="avc1""#, Some("720p"), 1280, 720, 30, 2_000_000),
-            fmt(298, r#"video/mp4; codecs="avc1""#, Some("720p60"), 1280, 720, 60, 3_000_000),
+            fmt(
+                136,
+                r#"video/mp4; codecs="avc1""#,
+                Some("720p"),
+                1280,
+                720,
+                30,
+                2_000_000,
+            ),
+            fmt(
+                298,
+                r#"video/mp4; codecs="avc1""#,
+                Some("720p60"),
+                1280,
+                720,
+                60,
+                3_000_000,
+            ),
         ];
         assert_eq!(pick_video(&formats, &Prefs::default()).unwrap().itag, 298);
     }
@@ -264,25 +334,81 @@ mod tests {
     #[test]
     fn falls_back_to_lowest_tier_when_all_exceed_cap() {
         let formats = vec![
-            fmt(1, r#"video/mp4; codecs="avc1""#, Some("1440p"), 2560, 1440, 30, 1),
-            fmt(2, r#"video/mp4; codecs="avc1""#, Some("2160p"), 3840, 2160, 30, 1),
+            fmt(
+                1,
+                r#"video/mp4; codecs="avc1""#,
+                Some("1440p"),
+                2560,
+                1440,
+                30,
+                1,
+            ),
+            fmt(
+                2,
+                r#"video/mp4; codecs="avc1""#,
+                Some("2160p"),
+                3840,
+                2160,
+                30,
+                1,
+            ),
         ];
         assert_eq!(pick_video(&formats, &Prefs::default()).unwrap().itag, 1);
     }
 
     #[test]
     fn rejects_ciphered_throttled_and_live_fragments() {
-        let mut ciphered = fmt(1, r#"video/mp4; codecs="avc1""#, Some("1080p"), 1920, 1080, 30, 9);
+        let mut ciphered = fmt(
+            1,
+            r#"video/mp4; codecs="avc1""#,
+            Some("1080p"),
+            1920,
+            1080,
+            30,
+            9,
+        );
         ciphered.url = None;
         ciphered.signature_cipher = Some("s=...&url=...".into());
-        let mut throttled = fmt(2, r#"video/mp4; codecs="avc1""#, Some("1080p"), 1920, 1080, 30, 8);
+        let mut throttled = fmt(
+            2,
+            r#"video/mp4; codecs="avc1""#,
+            Some("1080p"),
+            1920,
+            1080,
+            30,
+            8,
+        );
         throttled.url = Some("https://x.googlevideo.com/videoplayback?itag=2&n=abcdef".into());
-        let mut live = fmt(3, r#"video/mp4; codecs="avc1""#, Some("1080p"), 1920, 1080, 30, 7);
+        let mut live = fmt(
+            3,
+            r#"video/mp4; codecs="avc1""#,
+            Some("1080p"),
+            1920,
+            1080,
+            30,
+            7,
+        );
         live.target_duration_sec = Some(5.0);
-        let mut otf = fmt(4, r#"video/mp4; codecs="avc1""#, Some("1080p"), 1920, 1080, 30, 6);
+        let mut otf = fmt(
+            4,
+            r#"video/mp4; codecs="avc1""#,
+            Some("1080p"),
+            1920,
+            1080,
+            30,
+            6,
+        );
         otf.stream_type = Some("FORMAT_STREAM_TYPE_OTF".into());
         // `mn=` must not be mistaken for `n=`.
-        let mut ok = fmt(5, r#"video/mp4; codecs="avc1""#, Some("480p"), 854, 480, 30, 1);
+        let mut ok = fmt(
+            5,
+            r#"video/mp4; codecs="avc1""#,
+            Some("480p"),
+            854,
+            480,
+            30,
+            1,
+        );
         ok.url = Some("https://x.googlevideo.com/videoplayback?itag=5&mn=sn-abc".into());
         let v = pick_video(&[ciphered, throttled, live, otf, ok], &Prefs::default()).unwrap();
         assert_eq!(v.itag, 5);
@@ -291,10 +417,34 @@ mod tests {
     #[test]
     fn audio_prefers_original_track_and_skips_drc() {
         let formats = vec![
-            audio(251, r#"audio/webm; codecs="opus""#, 140_000, Some(("Japanese", false)), false),
-            audio(140, r#"audio/mp4; codecs="mp4a.40.2""#, 130_000, Some(("English original", true)), false),
-            audio(251, r#"audio/webm; codecs="opus""#, 136_000, Some(("English original", true)), false),
-            audio(251, r#"audio/webm; codecs="opus""#, 999_000, Some(("English original", true)), true),
+            audio(
+                251,
+                r#"audio/webm; codecs="opus""#,
+                140_000,
+                Some(("Japanese", false)),
+                false,
+            ),
+            audio(
+                140,
+                r#"audio/mp4; codecs="mp4a.40.2""#,
+                130_000,
+                Some(("English original", true)),
+                false,
+            ),
+            audio(
+                251,
+                r#"audio/webm; codecs="opus""#,
+                136_000,
+                Some(("English original", true)),
+                false,
+            ),
+            audio(
+                251,
+                r#"audio/webm; codecs="opus""#,
+                999_000,
+                Some(("English original", true)),
+                true,
+            ),
         ];
         let a = pick_audio(&formats).unwrap();
         assert_eq!((a.itag, a.bitrate), (251, 136_000));
@@ -303,7 +453,13 @@ mod tests {
     #[test]
     fn audio_without_tracks_takes_best_bitrate() {
         let formats = vec![
-            audio(140, r#"audio/mp4; codecs="mp4a.40.2""#, 130_000, None, false),
+            audio(
+                140,
+                r#"audio/mp4; codecs="mp4a.40.2""#,
+                130_000,
+                None,
+                false,
+            ),
             audio(249, r#"audio/webm; codecs="opus""#, 50_000, None, false),
         ];
         assert_eq!(pick_audio(&formats).unwrap().itag, 140);

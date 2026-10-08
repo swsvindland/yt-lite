@@ -311,7 +311,8 @@ mod tests {
     fn no_usable_formats_is_an_error() {
         let json = r#"{"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[
             {"itag":137,"signatureCipher":"s=x&url=y","mimeType":"video/mp4; codecs=\"avc1\""}]}}"#;
-        let err = interpret("x", serde_json::from_str(json).unwrap(), &Prefs::default()).unwrap_err();
+        let err =
+            interpret("x", serde_json::from_str(json).unwrap(), &Prefs::default()).unwrap_err();
         assert!(err.to_string().contains("no playable formats"));
     }
 }

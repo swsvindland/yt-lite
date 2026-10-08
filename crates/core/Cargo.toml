@@ -28,6 +28,8 @@ keyring = "4.2"
 directories = "6"
 
 toml = "1.1"
+# Edits config.toml in place, keeping comments and layout.
+toml_edit = "0.25"
 roxmltree = "0.21"
 
 sha2 = "0.11"

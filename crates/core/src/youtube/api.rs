@@ -156,6 +156,7 @@ impl Api<'_> {
                     // Private/deleted entries have no publish time.
                     published: i.content_details.video_published_at?,
                     link_hint: LinkHint::None,
+                    duration: None,
                 })
             })
             .collect())

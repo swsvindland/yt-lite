@@ -4,13 +4,14 @@
 //! Shorts filter are applied centrally in [`pipeline`], so no source — including
 //! the Phase 2 InnerTube "home" source — can put a Short in front of the UI.
 
+pub mod foryou;
 pub mod pipeline;
 pub mod subscriptions;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
-use crate::shorts::LinkHint;
+use crate::shorts::{DurationInfo, LinkHint};
 
 /// A video discovered by a source, before enrichment and filtering.
 #[derive(Clone, Debug, PartialEq)]
@@ -21,6 +22,8 @@ pub struct FeedItem {
     pub title: String,
     pub published: DateTime<Utc>,
     pub link_hint: LinkHint,
+    /// Known from the listing (related videos show it); RSS doesn't have it.
+    pub duration: Option<DurationInfo>,
 }
 
 /// Stable identifiers for sources; also used as the `source` column in SQLite
@@ -28,8 +31,7 @@ pub struct FeedItem {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FeedKind {
     Subscriptions,
-    /// Phase 2: InnerTube recommendations. Not implemented yet.
-    #[allow(dead_code)]
+    /// "For you": related videos of what you watched.
     Home,
 }
 
@@ -54,8 +56,8 @@ pub enum Retain {
     /// Keep cached items from these channels (subscriptions: history stays,
     /// unsubscribed channels drop out).
     Channels(Vec<String>),
-    /// The feed is exactly what was just fetched (e.g. a recommendations page).
-    #[allow(dead_code)]
+    /// The feed is exactly what was just fetched, in that order (e.g. a
+    /// recommendations page).
     OnlyFetched,
 }
 

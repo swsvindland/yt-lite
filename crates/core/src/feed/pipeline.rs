@@ -62,7 +62,8 @@ pub fn refresh(source: &dyn FeedSource, s: &Services, progress: Progress) -> Res
         .iter()
         .filter(|i| i.link_hint == LinkHint::ShortsLink)
         .count();
-    stats.new = s.db.upsert_items(source.kind(), &fetched.items, &fetched.retain)?;
+    stats.new =
+        s.db.upsert_items(source.kind(), &fetched.items, &fetched.retain)?;
     drop(fetched);
 
     let signed_in = match enrich(s, progress) {
@@ -109,7 +110,12 @@ fn enrich(s: &Services, progress: Progress) -> Result<usize> {
     Ok(done)
 }
 
-fn classify(s: &Services, signed_in: bool, stats: &mut RefreshStats, progress: Progress) -> Result<()> {
+fn classify(
+    s: &Services,
+    signed_in: bool,
+    stats: &mut RefreshStats,
+    progress: Progress,
+) -> Result<()> {
     let pending = s.db.unclassified(20_000)?;
     let mut verdicts = Vec::new();
     let mut to_probe = Vec::new();
@@ -149,7 +155,10 @@ fn classify(s: &Services, signed_in: bool, stats: &mut RefreshStats, progress: P
             }
         }
     }
-    stats.shorts = verdicts.iter().filter(|(_, v)| *v == Verdict::Short).count();
+    stats.shorts = verdicts
+        .iter()
+        .filter(|(_, v)| *v == Verdict::Short)
+        .count();
     s.db.set_verdicts(&verdicts)?;
     Ok(())
 }

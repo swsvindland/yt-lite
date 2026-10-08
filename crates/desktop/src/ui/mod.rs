@@ -1,5 +1,8 @@
+pub mod app_view;
 pub mod feed_view;
+pub mod settings_view;
 pub mod status;
+pub mod thumb_store;
 
 use chrono::Utc;
 

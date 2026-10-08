@@ -9,7 +9,9 @@ use objc2_app_kit::{NSBackingStoreType, NSWindow, NSWindowDelegate, NSWindowStyl
 use objc2_av_foundation::{AVPlayer, AVPlayerItem};
 use objc2_av_kit::{AVPlayerView, AVPlayerViewControlsStyle};
 use objc2_core_foundation::CGSize;
-use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{
+    NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL,
+};
 
 use super::PlayRequest;
 
@@ -58,7 +60,8 @@ pub struct SystemPlayer {
 
 impl SystemPlayer {
     pub fn open(&mut self, req: &PlayRequest) -> Result<()> {
-        let mtm = MainThreadMarker::new().ok_or_else(|| anyhow!("player must open on the main thread"))?;
+        let mtm = MainThreadMarker::new()
+            .ok_or_else(|| anyhow!("player must open on the main thread"))?;
         let url = NSURL::URLWithString(&NSString::from_str(&req.url))
             .ok_or_else(|| anyhow!("invalid stream URL"))?;
         let item = unsafe { AVPlayerItem::playerItemWithURL(&url, mtm) };
@@ -120,7 +123,9 @@ impl SystemPlayer {
 
 /// 1280 wide at the video's aspect ratio (16:9 if unknown).
 fn window_size(aspect: Option<f64>) -> (f64, f64) {
-    let aspect = aspect.filter(|a| a.is_finite() && *a > 0.2 && *a < 5.0).unwrap_or(16.0 / 9.0);
+    let aspect = aspect
+        .filter(|a| a.is_finite() && *a > 0.2 && *a < 5.0)
+        .unwrap_or(16.0 / 9.0);
     if aspect >= 1.0 {
         (1280.0, (1280.0 / aspect).round())
     } else {

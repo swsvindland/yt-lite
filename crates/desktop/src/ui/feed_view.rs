@@ -1,9 +1,10 @@
-//! The subscriptions grid.
+//! A video grid for one feed source (Subscriptions or For you).
 //!
-//! Virtualized with GPUI's `uniform_list`: each list item is one row of cards,
-//! and the number of columns follows the window width. Only visible rows are
-//! built, and only visible cards request thumbnails.
+//! Virtualized with GPUI's `uniform_list`: each list item is one row of cards.
+//! Card width adapts to the window (at least `MIN_CARD_W`, filling the row),
+//! only visible rows are built, and only visible cards request thumbnails.
 
+use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -12,31 +13,29 @@ use futures::future::{Either, select};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{
+    ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use smol::lock::Semaphore;
 
-use super::status::MemoryIndicator;
+use super::thumb_store::ThumbStore;
 use super::{format_age, now_unix};
+use crate::app_state::{Account, AppConfig, AppServices};
 use crate::auth::NotSignedIn;
-use crate::config::Paths;
 use crate::db::{FeedQuery, VideoRow};
-use crate::feed::FeedSource;
-use crate::feed::pipeline::{self, Services};
+use crate::feed::pipeline;
+use crate::feed::{FeedKind, FeedSource};
 use crate::player::{Method, Player, Prepared};
 use crate::system_player::SystemPlayer;
-use crate::thumbs::{self, Thumbnails};
 use crate::youtube::duration::format_clock;
-use crate::{OpenConfigFolder, Refresh, ToggleHideWatched};
 
-const CARD_W: f32 = 320.;
-const THUMB_H: f32 = 180.;
-const GAP: f32 = 16.;
-const SIDE_PAD: f32 = 16.;
-const MAX_PARALLEL_THUMBS: usize = 8;
-/// Decoded thumbnails are dropped after the window has been inactive this long.
-const IDLE_TRIM_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+pub const SIDEBAR_W: f32 = 232.;
+const MIN_CARD_W: f32 = 280.;
+const GAP: f32 = 20.;
+const PAD_X: f32 = 28.;
 
 struct Card {
     id: SharedString,
@@ -51,7 +50,10 @@ struct Card {
 impl From<VideoRow> for Card {
     fn from(v: VideoRow) -> Self {
         Self {
-            duration: v.duration_secs.filter(|s| *s > 0).map(|s| format_clock(s).into()),
+            duration: v
+                .duration_secs
+                .filter(|s| *s > 0)
+                .map(|s| format_clock(s).into()),
             id: v.id.into(),
             title: v.title.into(),
             channel: v.channel_title.into(),
@@ -62,134 +64,110 @@ impl From<VideoRow> for Card {
     }
 }
 
+pub enum FeedEvent {
+    OpenSettings,
+    /// A video started playing (For you uses this to know it's stale).
+    Watched,
+}
+
+impl EventEmitter<FeedEvent> for FeedView {}
+
+/// Shared between the feed views.
+#[derive(Clone)]
+pub struct Shared {
+    pub player: Arc<Player>,
+    pub system_player: Rc<RefCell<SystemPlayer>>,
+    pub thumbs: Entity<ThumbStore>,
+}
+
 pub struct FeedView {
-    services: Arc<Services>,
-    paths: Paths,
-    player: Arc<Player>,
-    system_player: SystemPlayer,
     source: Arc<dyn FeedSource>,
+    shared: Shared,
     cards: Rc<Vec<Card>>,
-    thumbs: Thumbnails,
-    thumb_permits: Arc<Semaphore>,
     status: SharedString,
     refreshing: bool,
-    signing_in: bool,
-    signed_in: bool,
-    hide_watched: bool,
     loaded_once: bool,
+    /// For you: something was watched since the last refresh.
+    pub stale: bool,
+    last_refresh: Option<i64>,
     scroll_test_started: bool,
     scroll: UniformListScrollHandle,
-    memory: Option<Entity<MemoryIndicator>>,
-    idle_trim: Option<Task<()>>,
-    _activation: Subscription,
-    focus: FocusHandle,
+    _subscriptions: Vec<Subscription>,
     _timer: Task<()>,
 }
 
 impl FeedView {
     pub fn new(
-        services: Arc<Services>,
-        paths: Paths,
-        player: Player,
         source: Arc<dyn FeedSource>,
+        shared: Shared,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let interval = services.config.feed.refresh_interval();
+        let interval = AppServices::get(cx).config.feed.refresh_interval();
         let timer = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(interval).await;
-                if this.update_in(cx, |v, window, cx| v.refresh(window, cx)).is_err() {
+                if this
+                    .update_in(cx, |v, window, cx| v.refresh(window, cx))
+                    .is_err()
+                {
                     break;
                 }
             }
         });
-        let memory = services
-            .config
-            .ui
-            .show_memory
-            .then(|| cx.new(MemoryIndicator::new));
-        let activation = cx.observe_window_activation(window, |this, window, cx| {
-            if window.is_window_active() {
-                this.idle_trim = None;
-            } else {
-                this.idle_trim = Some(cx.spawn(async move |this, cx| {
-                    cx.background_executor().timer(IDLE_TRIM_AFTER).await;
-                    this.update(cx, |v, cx| v.trim_thumbnails(cx)).ok();
-                }));
-            }
-        });
-        let thumbs = Thumbnails::new(
-            paths.thumbs_dir(),
-            services.config.cache.thumb_memory_mb * 1024 * 1024,
-        );
+        let mut was_signed_in = Account::get(cx).signed_in;
+        let subscriptions = vec![
+            cx.observe(&shared.thumbs, |_, _, cx| cx.notify()),
+            // Settings like "hide watched" or max age change the query.
+            cx.observe_global::<AppConfig>(|v, cx| v.reload(cx)),
+            cx.observe_global_in::<Account>(window, move |v, window, cx| {
+                let signed_in = Account::get(cx).signed_in;
+                if signed_in && !was_signed_in && v.source.kind() == FeedKind::Subscriptions {
+                    v.refresh(window, cx);
+                }
+                was_signed_in = signed_in;
+                cx.notify();
+            }),
+        ];
         let mut this = Self {
-            hide_watched: services.config.feed.hide_watched,
-            signed_in: false,
-            services,
-            paths,
-            player: Arc::new(player),
-            system_player: SystemPlayer::default(),
             source,
+            shared,
             cards: Rc::new(Vec::new()),
-            thumbs,
-            thumb_permits: Arc::new(Semaphore::new(MAX_PARALLEL_THUMBS)),
             status: "".into(),
             refreshing: false,
-            signing_in: false,
             loaded_once: false,
+            stale: false,
+            last_refresh: None,
             scroll_test_started: false,
             scroll: UniformListScrollHandle::new(),
-            memory,
-            idle_trim: None,
-            _activation: activation,
-            focus: cx.focus_handle(),
+            _subscriptions: subscriptions,
             _timer: timer,
         };
-        this.focus.focus(window, cx);
         this.startup(window, cx);
         this
     }
 
     /// Shows the cached feed immediately, then refreshes if it's stale.
     fn startup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let services = self.services.clone();
+        let services = AppServices::get(cx);
         let kind = self.source.kind();
-        let thumbs_dir = self.thumbs.dir().to_path_buf();
-        let disk_cap = services.config.cache.thumb_disk_mb * 1024 * 1024;
         cx.spawn_in(window, async move |this, cx| {
-            let (signed_in, last) = smol::unblock(move || {
-                match yt_lite_core::thumbcache::prune_disk(&thumbs_dir, disk_cap) {
-                    Ok(n) if n > 0 => log::info!("pruned {n} cached thumbnails"),
-                    Err(e) => log::warn!("thumbnail prune failed: {e:#}"),
-                    _ => {}
-                }
-                let last = services
+            let last = smol::unblock(move || {
+                services
                     .db
                     .meta_get(&format!("last_refresh.{}", kind.as_str()))
                     .ok()
                     .flatten()
-                    .and_then(|s| s.parse::<i64>().ok());
-                (services.auth.is_signed_in(), last)
+                    .and_then(|s| s.parse::<i64>().ok())
             })
             .await;
-            let stale = last.is_none_or(|t| {
-                now_unix() - t
-                    >= this
-                        .read_with(cx, |v, _| v.services.config.feed.refresh_interval().as_secs() as i64)
-                        .unwrap_or(0)
-            });
             this.update_in(cx, |v, window, cx| {
-                v.signed_in = signed_in;
+                v.last_refresh = last;
                 v.reload(cx);
-                if stale {
+                if v.is_stale(cx) {
                     v.refresh(window, cx);
                 } else {
                     v.maybe_scroll_test(window, cx);
-                }
-                // `YT_LITE_AUTOPLAY=<video id>`: play on startup (testing aid).
-                if let Some(id) = std::env::var("YT_LITE_AUTOPLAY").ok().filter(|s| !s.is_empty()) {
-                    v.play_video(id.into(), "Autoplay".into(), window, cx);
                 }
             })
             .ok();
@@ -197,20 +175,32 @@ impl FeedView {
         .detach();
     }
 
-    fn query(&self) -> FeedQuery {
-        let f = &self.services.config.feed;
+    fn is_stale(&self, cx: &App) -> bool {
+        let interval = AppConfig::get(cx).feed.refresh_interval().as_secs() as i64;
+        self.stale || self.last_refresh.is_none_or(|t| now_unix() - t >= interval)
+    }
+
+    /// Called when the tab is shown.
+    pub fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_stale(cx) {
+            self.refresh(window, cx);
+        }
+    }
+
+    fn query(&self, cx: &App) -> FeedQuery {
+        let f = &AppConfig::get(cx).feed;
         FeedQuery {
             kind: self.source.kind(),
             max_age_days: f.max_age_days,
             limit: f.max_items,
-            hide_watched: self.hide_watched,
+            hide_watched: f.hide_watched,
         }
     }
 
     /// Re-reads the feed from SQLite (off the UI thread).
     fn reload(&mut self, cx: &mut Context<Self>) {
-        let db = self.services.db.clone();
-        let q = self.query();
+        let db = AppServices::get(cx).db.clone();
+        let q = self.query(cx);
         cx.spawn(async move |this, cx| {
             let rows = smol::unblock(move || db.feed(q)).await;
             this.update(cx, |v, cx| {
@@ -228,16 +218,16 @@ impl FeedView {
         .detach();
     }
 
-    fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.refreshing || self.signing_in {
+    pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refreshing {
             return;
         }
         self.refreshing = true;
         self.status = "Refreshing…".into();
-        self.thumbs.clear_failures();
+        self.shared.thumbs.update(cx, |t, _| t.clear_failures());
         cx.notify();
 
-        let services = self.services.clone();
+        let services = AppServices::get(cx);
         let source = self.source.clone();
         let (tx, rx) = smol::channel::unbounded::<String>();
         cx.spawn_in(window, async move |this, cx| {
@@ -268,16 +258,17 @@ impl FeedView {
                 v.refreshing = false;
                 match result {
                     Ok(stats) => {
-                        v.signed_in = v.services.auth.is_signed_in();
-                        v.status = format!(
-                            "Updated {} · {stats}",
-                            chrono::Local::now().format("%H:%M")
-                        )
-                        .into();
+                        v.stale = false;
+                        v.last_refresh = Some(now_unix());
+                        let signed_in = AppServices::get(cx).auth.is_signed_in();
+                        cx.update_global::<Account, _>(|a, _| a.signed_in = signed_in);
+                        v.status =
+                            format!("Updated {} · {stats}", chrono::Local::now().format("%H:%M"))
+                                .into();
                     }
                     Err(e) if e.downcast_ref::<NotSignedIn>().is_some() => {
-                        v.signed_in = false;
-                        v.status = "Sign in with Google to load your subscriptions.".into();
+                        cx.update_global::<Account, _>(|a, _| a.signed_in = false);
+                        v.status = "".into();
                     }
                     Err(e) => {
                         log::error!("refresh failed: {e:#}");
@@ -296,11 +287,13 @@ impl FeedView {
         .detach();
     }
 
-    /// `YT_LITE_SCROLL_TEST=1`: after the first refresh, scroll through the
-    /// whole grid twice and log memory, to verify the memory budget with a
-    /// full thumbnail cache.
+    /// `YT_LITE_SCROLL_TEST=1`: scroll through the whole grid twice and log
+    /// memory, to verify the memory budget with a full thumbnail cache.
     fn maybe_scroll_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.scroll_test_started || std::env::var_os("YT_LITE_SCROLL_TEST").is_none() {
+        if self.scroll_test_started
+            || self.source.kind() != FeedKind::Subscriptions
+            || std::env::var_os("YT_LITE_SCROLL_TEST").is_none()
+        {
             return;
         }
         self.scroll_test_started = true;
@@ -311,9 +304,9 @@ impl FeedView {
             wait(2000).await;
             crate::mem::log_now("scroll test start");
             for pass in 1..=2 {
-                let Ok(rows) =
-                    this.update_in(cx, |v, window, _| v.cards.len().div_ceil(v.columns(window)))
-                else {
+                let Ok(rows) = this.update_in(cx, |v, window, _| {
+                    v.cards.len().div_ceil(layout(window).cols)
+                }) else {
                     return;
                 };
                 for row in 0..rows {
@@ -325,7 +318,10 @@ impl FeedView {
                 this.update(cx, |_, cx| cx.notify()).ok();
                 wait(2000).await;
                 let stats = this
-                    .read_with(cx, |v, _| (v.cards.len(), v.thumbs.len(), v.thumbs.memory_bytes()))
+                    .read_with(cx, |v, cx| {
+                        let t = v.shared.thumbs.read(cx);
+                        (v.cards.len(), t.len(), t.memory_bytes())
+                    })
                     .unwrap_or_default();
                 log::info!(
                     "scroll test pass {pass}: {rows} rows, {} cards, {} thumbs cached ({:.1} MB)",
@@ -339,82 +335,38 @@ impl FeedView {
         .detach();
     }
 
-    fn sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.services.config.has_google_client() {
-            window.push_notification(
-                Notification::warning(format!(
-                    "Add your Google OAuth client_id and client_secret to {} and restart.",
-                    self.paths.config_file.display()
-                ))
-                .title("Google client not configured"),
-                cx,
-            );
-            return;
-        }
-        if self.signing_in {
-            return;
-        }
-        self.signing_in = true;
-        self.status = "Waiting for sign-in in your browser…".into();
-        cx.notify();
-        let services = self.services.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let result = smol::unblock(move || services.auth.sign_in()).await;
-            this.update_in(cx, |v, window, cx| {
-                v.signing_in = false;
-                match result {
-                    Ok(()) => {
-                        v.signed_in = true;
-                        v.refresh(window, cx);
-                    }
-                    Err(e) => {
-                        v.status = "Sign-in failed".into();
-                        window.push_notification(
-                            Notification::error(format!("{e:#}")).title("Sign-in failed"),
-                            cx,
-                        );
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn sign_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Err(e) = self.services.auth.sign_out() {
-            window.push_notification(Notification::error(format!("{e:#}")), cx);
-        }
-        self.signed_in = false;
-        self.status = "Signed out".into();
-        cx.notify();
-    }
-
     fn play(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(card) = self.cards.get(ix) else { return };
+        let Some(card) = self.cards.get(ix) else {
+            return;
+        };
         let (id, title) = (card.id.clone(), card.title.clone());
         self.play_video(id, title, window, cx);
     }
 
-    fn play_video(
+    pub fn play_video(
         &mut self,
         id: SharedString,
         title: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let player = self.player.clone();
+        let player = self.shared.player.clone();
+        let max_tier = AppConfig::get(cx).player.max_height;
         self.status = format!("Opening “{title}”…").into();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let video_id = id.to_string();
-            let result = smol::unblock(move || player.prepare(&video_id, &title)).await;
+            let result = smol::unblock(move || player.prepare(&video_id, &title, max_tier)).await;
             this.update_in(cx, |v, window, cx| {
                 // The system player must be created on the UI thread.
                 let result = result.and_then(|prepared| match prepared {
                     Prepared::Started(method) => Ok(method),
-                    Prepared::System(req, method) => v.system_player.open(&req).map(|()| method),
+                    Prepared::System(req, method) => v
+                        .shared
+                        .system_player
+                        .borrow_mut()
+                        .open(&req)
+                        .map(|()| method),
                 });
                 match result {
                     Ok(method) => {
@@ -422,10 +374,10 @@ impl FeedView {
                             Method::Native => "Playing".into(),
                             Method::YtDlp => "Playing (via yt-dlp)".into(),
                         };
-                        // The list may have been reloaded meanwhile; find by id.
                         if let Some(ix) = v.cards.iter().position(|c| c.id == id) {
                             v.set_watched(ix, true, cx);
                         }
+                        cx.emit(FeedEvent::Watched);
                     }
                     Err(e) => {
                         v.status = "".into();
@@ -446,10 +398,12 @@ impl FeedView {
         let Some(cards) = Rc::get_mut(&mut self.cards) else {
             return;
         };
-        let Some(card) = cards.get_mut(ix) else { return };
+        let Some(card) = cards.get_mut(ix) else {
+            return;
+        };
         card.watched = watched;
         let id = card.id.to_string();
-        let db = self.services.db.clone();
+        let db = AppServices::get(cx).db.clone();
         cx.background_spawn(async move {
             if let Err(e) = db.set_watched(&id, watched) {
                 log::error!("set_watched {id}: {e:#}");
@@ -459,89 +413,24 @@ impl FeedView {
         cx.notify();
     }
 
-    fn toggle_hide_watched(&mut self, cx: &mut Context<Self>) {
-        self.hide_watched = !self.hide_watched;
-        self.reload(cx);
-    }
-
-    fn request_thumb(&mut self, id: SharedString, window: &Window, cx: &mut Context<Self>) {
-        if !self.thumbs.begin_load(&id) {
-            return;
-        }
-        let http = self.services.http.clone();
-        let dir = self.thumbs.dir().to_path_buf();
-        let permits = self.thumb_permits.clone();
-        // Decode at the physical display size.
-        let scale = window.scale_factor();
-        let (w, h) = ((CARD_W * scale) as u32, (THUMB_H * scale) as u32);
-        cx.spawn(async move |this, cx| {
-            let _permit = permits.acquire_arc().await;
-            let id_for_load = id.clone();
-            let result = smol::unblock(move || thumbs::load(&http, &dir, &id_for_load, w, h)).await;
-            this.update(cx, |v, cx| {
-                let evicted = v.thumbs.finish(id, result);
-                for img in evicted {
-                    cx.drop_image(img, None);
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Releases all decoded thumbnails (CPU buffers and GPU atlas tiles).
-    /// They reload from the disk cache when next shown.
-    fn trim_thumbnails(&mut self, cx: &mut Context<Self>) {
-        let images = self.thumbs.clear();
-        let n = images.len();
-        for img in images {
-            cx.drop_image(img, None);
-        }
-        log::info!("idle: released {n} thumbnails");
-        cx.notify();
-        // Measure after the allocator has had a moment.
-        cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(2))
-                .await;
-            crate::mem::log_now("after idle trim");
-        })
-        .detach();
-    }
-
-    fn open_config_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let dir = self.paths.config_file.parent().map(|p| p.to_path_buf());
-        if let Some(dir) = dir
-            && let Err(e) = open::that_detached(&dir)
-        {
-            window.push_notification(Notification::error(e.to_string()), cx);
-        }
-    }
-
-    fn columns(&self, window: &Window) -> usize {
-        let width = f32::from(window.viewport_size().width) - SIDE_PAD * 2.;
-        (((width + GAP) / (CARD_W + GAP)).floor() as usize).max(1)
-    }
-
     fn render_row(
         &mut self,
         row: usize,
-        cols: usize,
+        l: Layout,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let start = row * cols;
-        let end = (start + cols).min(self.cards.len());
+        let start = row * l.cols;
+        let end = (start + l.cols).min(self.cards.len());
         let now = now_unix();
         let cards = (start..end)
-            .map(|ix| self.render_card(ix, now, window, cx))
+            .map(|ix| self.render_card(ix, l, now, window, cx))
             .collect::<Vec<_>>();
         h_flex()
             .id(("row", row))
             .w_full()
-            .px(px(SIDE_PAD))
-            .pt(px(GAP))
+            .px(px(PAD_X))
+            .pb(px(GAP))
             .gap(px(GAP))
             .items_start()
             .children(cards)
@@ -551,47 +440,56 @@ impl FeedView {
     fn render_card(
         &mut self,
         ix: usize,
+        l: Layout,
         now: i64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let cards = self.cards.clone();
         let card = &cards[ix];
-        let image = self.thumbs.get(&card.id);
-        if image.is_none() {
-            self.request_thumb(card.id.clone(), window, cx);
-        }
+        let scale = window.scale_factor();
+        let image = self.shared.thumbs.update(cx, |t, cx| {
+            t.get(&card.id, (l.card_w, l.thumb_h), scale, cx)
+        });
         let theme = cx.theme();
         let watched = card.watched;
 
-        let badge = card
-            .duration
-            .clone()
-            .or_else(|| card.live.then(|| SharedString::from("LIVE")));
+        let badge = match (&card.duration, card.live) {
+            (_, true) => Some(
+                div()
+                    .px_1p5()
+                    .rounded_md()
+                    .bg(rgb(0xcc0000))
+                    .text_color(white())
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("LIVE"),
+            ),
+            (Some(d), false) => Some(
+                div()
+                    .px_1p5()
+                    .rounded_md()
+                    .bg(black().opacity(0.78))
+                    .text_color(white())
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(d.clone()),
+            ),
+            _ => None,
+        };
+
         let thumb = div()
-            .id("thumb")
             .relative()
-            .w(px(CARD_W))
-            .h(px(THUMB_H))
-            .rounded(theme.radius_lg)
+            .w(px(l.card_w))
+            .h(px(l.thumb_h))
+            .rounded(px(12.))
             .overflow_hidden()
             .bg(theme.muted)
-            .cursor_pointer()
-            .on_click(cx.listener(move |this, _, window, cx| this.play(ix, window, cx)))
-            .when_some(image, |d, image| d.child(img(image).size_full()))
+            .when_some(image, |d, image| {
+                d.child(img(image).size_full().object_fit(ObjectFit::Cover))
+            })
             .when_some(badge, |d, badge| {
-                d.child(
-                    div()
-                        .absolute()
-                        .bottom_1()
-                        .right_1()
-                        .px_1()
-                        .rounded_sm()
-                        .bg(black().opacity(0.8))
-                        .text_color(white())
-                        .text_xs()
-                        .child(badge),
-                )
+                d.child(div().absolute().bottom_2().right_2().child(badge))
             })
             .when(watched, |d| {
                 d.child(
@@ -601,148 +499,252 @@ impl FeedView {
                         .left_0()
                         .w_full()
                         .h(px(4.))
-                        .bg(theme.danger),
+                        .bg(rgb(0xff0033)),
                 )
             });
 
+        let eye = Button::new("watched")
+            .ghost()
+            .xsmall()
+            .icon(if watched {
+                IconName::EyeOff
+            } else {
+                IconName::Eye
+            })
+            .tooltip(if watched {
+                "Mark as unwatched"
+            } else {
+                "Mark as watched"
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.set_watched(ix, !watched, cx)
+            }));
+
         v_flex()
             .id(card.id.clone())
-            .w(px(CARD_W))
-            .gap_1()
-            .when(watched, |d| d.opacity(0.6))
+            .w(px(l.card_w))
+            .gap_2()
+            .cursor_pointer()
+            .group("card")
+            .when(watched, |d| d.opacity(0.55))
+            .on_click(cx.listener(move |this, _, window, cx| this.play(ix, window, cx)))
             .child(thumb)
             .child(
                 h_flex()
                     .items_start()
                     .gap_1()
                     .child(
-                        div()
-                            .id("title")
+                        v_flex()
                             .flex_1()
-                            .h(px(40.))
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .line_clamp(2)
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, window, cx| this.play(ix, window, cx)))
-                            .child(card.title.clone()),
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .h(px(40.))
+                                    .text_sm()
+                                    .line_height(px(20.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .line_clamp(2)
+                                    .group_hover("card", |s| s.text_color(theme.primary))
+                                    .child(card.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .truncate()
+                                    .child(format!(
+                                        "{} · {}",
+                                        card.channel,
+                                        format_age(card.published, now)
+                                    )),
+                            ),
                     )
-                    .child(
-                        Button::new("watched")
-                            .ghost()
-                            .xsmall()
-                            .icon(if watched { IconName::EyeOff } else { IconName::Eye })
-                            .tooltip(if watched { "Mark as unwatched" } else { "Mark as watched" })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_watched(ix, !watched, cx)
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .truncate()
-                    .child(format!("{} · {}", card.channel, format_age(card.published, now))),
+                    .child(eye),
             )
             .into_any_element()
     }
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let border = cx.theme().border;
-        let muted_fg = cx.theme().muted_foreground;
-        let auth_button = if self.signed_in {
-            Button::new("sign-out")
-                .ghost()
-                .small()
-                .label("Sign out")
-                .on_click(cx.listener(|this, _, window, cx| this.sign_out(window, cx)))
+    fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let hide_watched = AppConfig::get(cx).feed.hide_watched;
+        let subtitle: SharedString = if self.status.is_empty() {
+            format!("{} videos", self.cards.len()).into()
         } else {
-            Button::new("sign-in")
-                .primary()
-                .small()
-                .icon(IconName::CircleUser)
-                .label("Sign in with Google")
-                .loading(self.signing_in)
-                .on_click(cx.listener(|this, _, window, cx| this.sign_in(window, cx)))
+            self.status.clone()
         };
         h_flex()
             .w_full()
-            .px_4()
-            .py_2()
-            .gap_3()
-            .border_b_1()
-            .border_color(border)
+            .px(px(PAD_X))
+            .pt_6()
+            .pb_4()
+            .gap_4()
+            .items_end()
             .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(self.source.display_name()),
-            )
-            .child(
-                div()
+                v_flex()
                     .flex_1()
-                    .text_sm()
-                    .text_color(muted_fg)
-                    .truncate()
-                    .child(self.status.clone()),
+                    .min_w_0()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::BOLD)
+                            .child(self.source.display_name()),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .when(self.refreshing, |d| d.child(Spinner::new().xsmall()))
+                            .child(div().truncate().child(subtitle)),
+                    ),
             )
             .child(
-                Button::new("hide-watched")
-                    .ghost()
-                    .small()
-                    .icon(if self.hide_watched { IconName::EyeOff } else { IconName::Eye })
-                    .label(if self.hide_watched { "Show watched" } else { "Hide watched" })
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_hide_watched(cx))),
+                h_flex()
+                    .gap_4()
+                    .items_center()
+                    .child(
+                        Switch::new("hide-watched")
+                            .checked(hide_watched)
+                            .label("Hide watched")
+                            .small()
+                            .on_click(|checked, _, cx| {
+                                let checked = *checked;
+                                AppConfig::update(cx, |c| c.feed.hide_watched = checked);
+                            }),
+                    )
+                    .child(
+                        Button::new("refresh")
+                            .outline()
+                            .small()
+                            .icon(IconName::RefreshCw)
+                            .label("Refresh")
+                            .loading(self.refreshing)
+                            .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
+                    ),
             )
-            .child(
-                Button::new("refresh")
-                    .ghost()
-                    .small()
-                    .icon(IconName::RefreshCw)
-                    .label("Refresh")
-                    .loading(self.refreshing)
-                    .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
-            )
-            .child(
-                Button::new("settings")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Settings)
-                    .tooltip("Open config folder")
-                    .on_click(cx.listener(|this, _, window, cx| this.open_config_folder(window, cx))),
-            )
-            .child(auth_button)
             .into_any_element()
     }
 
     fn render_empty(&self, cx: &mut Context<Self>) -> AnyElement {
-        let msg = if !self.loaded_once || self.refreshing {
-            "Loading…"
-        } else if !self.signed_in && self.services.config.feed.extra_channels.is_empty() {
-            "Sign in with Google to see your subscriptions."
+        let theme = cx.theme();
+        let account = Account::get(cx);
+        let (icon, title, body, action): (IconName, &str, &str, Option<AnyElement>) = if !self
+            .loaded_once
+            || (self.refreshing && self.cards.is_empty())
+        {
+            (
+                IconName::LoaderCircle,
+                "Loading…",
+                "Fetching the latest videos.",
+                None,
+            )
+        } else if self.source.kind() == FeedKind::Subscriptions
+            && !account.signed_in
+            && AppConfig::get(cx).feed.extra_channels.is_empty()
+        {
+            let has_client = AppConfig::get(cx).has_google_client();
+            let button = if has_client {
+                Button::new("sign-in")
+                    .primary()
+                    .icon(IconName::CircleUser)
+                    .label("Sign in with Google")
+                    .loading(account.signing_in)
+                    .on_click(|_, window, cx| Account::sign_in(window, cx))
+            } else {
+                Button::new("open-settings")
+                    .primary()
+                    .icon(IconName::Settings)
+                    .label("Open Settings")
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(FeedEvent::OpenSettings)))
+            };
+            (
+                IconName::CircleUser,
+                "Connect your YouTube account",
+                if has_client {
+                    "Sign in to load the channels you subscribe to. Only read access is requested."
+                } else {
+                    "Add your Google OAuth client in Settings to load your subscriptions."
+                },
+                Some(button.into_any_element()),
+            )
+        } else if self.source.kind() == FeedKind::Home {
+            (
+                IconName::Star,
+                "Nothing here yet",
+                "Watch a few videos and yt-lite will recommend more like them.",
+                None,
+            )
         } else {
-            "No videos yet."
+            (
+                IconName::Inbox,
+                "No videos yet",
+                "New uploads from your subscriptions show up here.",
+                None,
+            )
         };
-        div()
+        v_flex()
             .flex_1()
-            .flex()
             .items_center()
             .justify_center()
-            .text_color(cx.theme().muted_foreground)
-            .child(msg)
+            .gap_3()
+            .p_8()
+            .child(
+                div()
+                    .size(px(56.))
+                    .rounded_full()
+                    .bg(theme.muted)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(Icon::new(icon).size_6().text_color(theme.muted_foreground)),
+            )
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .max_w(px(380.))
+                    .text_sm()
+                    .text_center()
+                    .text_color(theme.muted_foreground)
+                    .child(body),
+            )
+            .children(action.map(|a| div().pt_2().child(a)))
             .into_any_element()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Layout {
+    cols: usize,
+    card_w: f32,
+    thumb_h: f32,
+}
+
+fn layout(window: &Window) -> Layout {
+    let avail = (f32::from(window.viewport_size().width) - SIDEBAR_W - PAD_X * 2.).max(MIN_CARD_W);
+    let cols = (((avail + GAP) / (MIN_CARD_W + GAP)).floor() as usize).max(1);
+    let card_w = ((avail - GAP * (cols as f32 - 1.)) / cols as f32).floor();
+    Layout {
+        cols,
+        card_w,
+        thumb_h: (card_w * 9. / 16.).round(),
     }
 }
 
 impl Render for FeedView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let cols = self.columns(window);
-        let rows = self.cards.len().div_ceil(cols);
-        let count_label = format!("{} videos", self.cards.len());
-
+        let l = layout(window);
+        let rows = self.cards.len().div_ceil(l.cols);
+        let header = self.render_header(cx);
         let body = if self.cards.is_empty() {
-            self.render_empty(cx).into_any_element()
+            self.render_empty(cx)
         } else {
             div()
                 .flex_1()
@@ -754,51 +756,16 @@ impl Render for FeedView {
                         rows,
                         cx.processor(move |this, range: Range<usize>, window, cx| {
                             range
-                                .map(|row| this.render_row(row, cols, window, cx))
+                                .map(|row| this.render_row(row, l, window, cx))
                                 .collect::<Vec<_>>()
                         }),
                     )
                     .track_scroll(&self.scroll)
-                    .size_full()
-                    .pb(px(GAP)),
+                    .size_full(),
                 )
                 .vertical_scrollbar(&self.scroll)
                 .into_any_element()
         };
-
-        let toolbar = self.render_toolbar(cx);
-        let theme = cx.theme();
-        v_flex()
-            .track_focus(&self.focus)
-            .key_context("FeedView")
-            .on_action(cx.listener(|this, _: &Refresh, window, cx| this.refresh(window, cx)))
-            .on_action(cx.listener(|this, _: &ToggleHideWatched, _, cx| this.toggle_hide_watched(cx)))
-            .on_action(cx.listener(|this, _: &OpenConfigFolder, window, cx| {
-                this.open_config_folder(window, cx)
-            }))
-            .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .child(toolbar)
-            .child(body)
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_4()
-                    .py_1()
-                    .gap_4()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(count_label)
-                    .child(format!(
-                        "thumbs {} ({:.0} MB)",
-                        self.thumbs.len(),
-                        crate::mem::mb(self.thumbs.memory_bytes())
-                    ))
-                    .child(div().flex_1())
-                    .children(self.memory.clone()),
-            )
+        v_flex().size_full().child(header).child(body)
     }
 }

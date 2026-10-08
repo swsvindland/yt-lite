@@ -19,7 +19,8 @@ use anyhow::{Context as _, Result};
 use windows::Foundation::{Size, TimeSpan, TypedEventHandler, Uri};
 use windows::Media::Core::MediaSource;
 use windows::Media::Playback::{
-    IMediaPlaybackSource, MediaPlaybackSession, MediaPlaybackState, MediaPlayer, MediaPlayerFailedEventArgs, MediaPlayerSurface,
+    IMediaPlaybackSource, MediaPlaybackSession, MediaPlaybackState, MediaPlayer,
+    MediaPlayerFailedEventArgs, MediaPlayerSurface,
 };
 use windows::System::{DispatcherQueue, DispatcherQueueController};
 use windows::UI::Color;
@@ -27,8 +28,8 @@ use windows::UI::Composition::Desktop::DesktopWindowTarget;
 use windows::UI::Composition::{CompositionStretch, Compositor, ContainerVisual, SpriteVisual};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, GetStockObject, HBRUSH, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
-    BLACK_BRUSH,
+    BLACK_BRUSH, GetMonitorInfoW, GetStockObject, HBRUSH, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    MonitorFromWindow,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop;
@@ -36,7 +37,9 @@ use windows::Win32::System::WinRT::{
     CreateDispatcherQueueController, DQTAT_COM_NONE, DQTYPE_THREAD_CURRENT, DispatcherQueueOptions,
 };
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RIGHT, VK_SPACE, VK_UP};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RIGHT, VK_SPACE, VK_UP,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{HSTRING, Interface, w};
 use windows_numerics::{Vector2, Vector3};
@@ -71,7 +74,9 @@ pub fn open(url: &str, title: &str, aspect: Option<f64>) -> Result<()> {
     let source = MediaSource::CreateFromUri(&uri)?;
 
     let reused = STATE.with_borrow_mut(|state| -> Result<bool> {
-        let Some(s) = state.as_mut() else { return Ok(false) };
+        let Some(s) = state.as_mut() else {
+            return Ok(false);
+        };
         s.title = title.to_string();
         s.player.SetSource(&source)?;
         s.player.Play()?;
@@ -123,7 +128,9 @@ fn create(title: &str, aspect: Option<f64>) -> Result<State> {
 
     // 1280 logical pixels wide at the video's aspect ratio.
     let scale = f64::from(unsafe { GetDpiForSystem() }) / 96.0;
-    let aspect = aspect.filter(|a| a.is_finite() && *a > 0.2 && *a < 5.0).unwrap_or(16.0 / 9.0);
+    let aspect = aspect
+        .filter(|a| a.is_finite() && *a > 0.2 && *a < 5.0)
+        .unwrap_or(16.0 / 9.0);
     let (cw, ch) = if aspect >= 1.0 {
         (1280.0, 1280.0 / aspect)
     } else {
@@ -135,7 +142,14 @@ fn create(title: &str, aspect: Option<f64>) -> Result<State> {
         right: (cw * scale) as i32,
         bottom: (ch * scale) as i32,
     };
-    unsafe { AdjustWindowRectEx(&mut rect, WS_OVERLAPPEDWINDOW, false, WS_EX_NOREDIRECTIONBITMAP)? };
+    unsafe {
+        AdjustWindowRectEx(
+            &mut rect,
+            WS_OVERLAPPEDWINDOW,
+            false,
+            WS_EX_NOREDIRECTIONBITMAP,
+        )?
+    };
 
     let hwnd = unsafe {
         CreateWindowExW(
@@ -163,7 +177,12 @@ fn create(title: &str, aspect: Option<f64>) -> Result<State> {
 
     let background = compositor.CreateSpriteVisual()?;
     background.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
-    background.SetBrush(&compositor.CreateColorBrushWithColor(Color { A: 255, R: 0, G: 0, B: 0 })?)?;
+    background.SetBrush(&compositor.CreateColorBrushWithColor(Color {
+        A: 255,
+        R: 0,
+        G: 0,
+        B: 0,
+    })?)?;
 
     let player = MediaPlayer::new()?;
     player.SetAutoPlay(true)?;
@@ -183,13 +202,31 @@ fn create(title: &str, aspect: Option<f64>) -> Result<State> {
         let v = compositor.CreateSpriteVisual()?;
         v.SetBrush(&compositor.CreateColorBrushWithColor(color)?)?;
         v.SetSize(Vector2 { X: 0.0, Y: 4.0 })?;
-        v.SetRelativeOffsetAdjustment(Vector3 { X: 0.0, Y: 1.0, Z: 0.0 })?;
-        v.SetOffset(Vector3 { X: 0.0, Y: -4.0, Z: 0.0 })?;
+        v.SetRelativeOffsetAdjustment(Vector3 {
+            X: 0.0,
+            Y: 1.0,
+            Z: 0.0,
+        })?;
+        v.SetOffset(Vector3 {
+            X: 0.0,
+            Y: -4.0,
+            Z: 0.0,
+        })?;
         Ok(v)
     };
-    let track = bar(Color { A: 70, R: 255, G: 255, B: 255 })?;
+    let track = bar(Color {
+        A: 70,
+        R: 255,
+        G: 255,
+        B: 255,
+    })?;
     track.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 0.0 })?;
-    let progress = bar(Color { A: 255, R: 229, G: 9, B: 20 })?;
+    let progress = bar(Color {
+        A: 255,
+        R: 229,
+        G: 9,
+        B: 20,
+    })?;
 
     let children = root.Children()?;
     children.InsertAtTop(&background)?;
@@ -200,8 +237,8 @@ fn create(title: &str, aspect: Option<f64>) -> Result<State> {
 
     // Surface failures in the title bar; they arrive on a worker thread.
     let hwnd_bits = hwnd.0 as isize;
-    player.MediaFailed(&TypedEventHandler::<MediaPlayer, MediaPlayerFailedEventArgs>::new(
-        move |_, args| {
+    player.MediaFailed(
+        &TypedEventHandler::<MediaPlayer, MediaPlayerFailedEventArgs>::new(move |_, args| {
             let msg = args
                 .as_ref()
                 .and_then(|a| a.ErrorMessage().ok())
@@ -213,8 +250,8 @@ fn create(title: &str, aspect: Option<f64>) -> Result<State> {
                 let _ = SetWindowTextW(hwnd, &HSTRING::from(format!("Playback failed: {msg}")));
             }
             Ok(())
-        },
-    ))?;
+        }),
+    )?;
 
     unsafe { SetTimer(Some(hwnd), TIMER_ID, 500, None) };
 
@@ -251,7 +288,11 @@ fn ensure_dispatcher_queue() -> Result<Option<DispatcherQueueController>> {
 /// (window messages can arrive re-entrantly while `open` holds it).
 fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
     STATE
-        .try_with(|cell| cell.try_borrow_mut().ok().and_then(|mut s| s.as_mut().map(f)))
+        .try_with(|cell| {
+            cell.try_borrow_mut()
+                .ok()
+                .and_then(|mut s| s.as_mut().map(f))
+        })
         .ok()
         .flatten()
 }
@@ -266,18 +307,27 @@ impl State {
             .session()
             .and_then(|s| s.PlaybackState().ok())
             .is_some_and(|st| st == MediaPlaybackState::Playing);
-        let _ = if playing { self.player.Pause() } else { self.player.Play() };
+        let _ = if playing {
+            self.player.Pause()
+        } else {
+            self.player.Play()
+        };
         self.update_title();
     }
 
     /// Position and duration in 100 ns ticks.
     fn times(&self) -> Option<(i64, i64)> {
         let s = self.session()?;
-        Some((s.Position().ok()?.Duration, s.NaturalDuration().ok()?.Duration))
+        Some((
+            s.Position().ok()?.Duration,
+            s.NaturalDuration().ok()?.Duration,
+        ))
     }
 
     fn seek_by(&self, secs: i64) {
-        let Some((pos, dur)) = self.times() else { return };
+        let Some((pos, dur)) = self.times() else {
+            return;
+        };
         let target = (pos + secs * 10_000_000).clamp(0, dur.max(0));
         self.seek_to(target);
     }
@@ -307,7 +357,9 @@ impl State {
             Some((pos, dur)) if dur > 0 => (pos as f64 / dur as f64).clamp(0.0, 1.0) as f32,
             _ => 0.0,
         };
-        let _ = self.progress.SetRelativeSizeAdjustment(Vector2 { X: frac, Y: 0.0 });
+        let _ = self
+            .progress
+            .SetRelativeSizeAdjustment(Vector2 { X: frac, Y: 0.0 });
     }
 
     fn update_title(&self) {
@@ -389,12 +441,19 @@ impl State {
                 ..Default::default()
             };
             if GetWindowPlacement(self.hwnd, &mut placement).is_err()
-                || !GetMonitorInfoW(MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST), &mut monitor)
-                    .as_bool()
+                || !GetMonitorInfoW(
+                    MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST),
+                    &mut monitor,
+                )
+                .as_bool()
             {
                 return;
             }
-            SetWindowLongW(self.hwnd, GWL_STYLE, style & !(WS_OVERLAPPEDWINDOW.0 as i32));
+            SetWindowLongW(
+                self.hwnd,
+                GWL_STYLE,
+                style & !(WS_OVERLAPPEDWINDOW.0 as i32),
+            );
             let r = monitor.rcMonitor;
             let _ = SetWindowPos(
                 self.hwnd,

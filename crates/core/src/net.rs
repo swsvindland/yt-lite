@@ -14,11 +14,9 @@ use ureq::Agent;
 
 use crate::shorts::{self, Verdict};
 
-
 const USER_AGENT: &str = concat!("yt-lite/", env!("CARGO_PKG_VERSION"));
 /// Browser-like UA for youtube.com pages (RSS, Shorts probe).
-const BROWSER_UA: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36";
+const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36";
 /// Pre-accepts the EU consent interstitial so youtube.com doesn't redirect to
 /// consent.youtube.com (same cookie yt-dlp uses).
 const CONSENT_COOKIE: &str = "SOCS=CAI";
@@ -66,7 +64,11 @@ impl Http {
         if status != 200 {
             bail!("GET {url}: HTTP {status}");
         }
-        Ok(resp.body_mut().with_config().limit(2 * 1024 * 1024).read_to_vec()?)
+        Ok(resp
+            .body_mut()
+            .with_config()
+            .limit(2 * 1024 * 1024)
+            .read_to_vec()?)
     }
 
     /// GET a Google API endpoint with a bearer token and decode JSON.
@@ -111,7 +113,11 @@ impl Http {
             let body = resp.body_mut().read_to_string().unwrap_or_default();
             return Err(ApiError { status, body }.into());
         }
-        Ok(resp.body_mut().with_config().limit(16 * 1024 * 1024).read_json()?)
+        Ok(resp
+            .body_mut()
+            .with_config()
+            .limit(16 * 1024 * 1024)
+            .read_json()?)
     }
 
     /// Requests `youtube.com/shorts/<id>` without following redirects. A Short
@@ -130,13 +136,12 @@ impl Http {
             .build()
             .call()?;
         let status = resp.status().as_u16();
-        let location = resp
-            .headers()
-            .get("location")
-            .and_then(|v| v.to_str().ok());
+        let location = resp.headers().get("location").and_then(|v| v.to_str().ok());
         let verdict = shorts::interpret_probe(status, location);
         if verdict.is_none() {
-            log::warn!("shorts probe {video_id}: inconclusive (HTTP {status}, location {location:?})");
+            log::warn!(
+                "shorts probe {video_id}: inconclusive (HTTP {status}, location {location:?})"
+            );
         }
         Ok(verdict)
     }
@@ -187,11 +192,13 @@ pub fn parallel_map<T: Sync, R: Send>(
         std::sync::Mutex::new((0..items.len()).map(|_| None).collect());
     std::thread::scope(|s| {
         for _ in 0..concurrency.min(items.len()) {
-            s.spawn(|| loop {
-                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let Some(item) = items.get(i) else { break };
-                let r = f(item);
-                results.lock().unwrap()[i] = Some(r);
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(item) = items.get(i) else { break };
+                    let r = f(item);
+                    results.lock().unwrap()[i] = Some(r);
+                }
             });
         }
     });
@@ -225,6 +232,9 @@ mod tests {
             status: 400,
             body: r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#.into(),
         };
-        assert_eq!(e.to_string(), "HTTP 400: Token has been expired or revoked.");
+        assert_eq!(
+            e.to_string(),
+            "HTTP 400: Token has been expired or revoked."
+        );
     }
 }

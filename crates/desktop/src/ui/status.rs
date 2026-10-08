@@ -20,11 +20,12 @@ impl MemoryIndicator {
             loop {
                 let Some(m) = mem::current() else { break };
                 let text = format!("RSS {:.0} MB", mem::mb(m.physical));
-                if this.update(cx, |v, cx| {
-                    v.text = text.into();
-                    cx.notify();
-                })
-                .is_err()
+                if this
+                    .update(cx, |v, cx| {
+                        v.text = text.into();
+                        cx.notify();
+                    })
+                    .is_err()
                 {
                     break;
                 }

@@ -207,18 +207,54 @@ impl Auth {
         Ok(())
     }
 
-    /// Desktop sign-in: opens the system browser and waits (blocking, up to
-    /// 5 minutes) for Google to redirect back to a loopback port.
-    #[cfg(feature = "loopback-auth")]
-    pub fn sign_in(&self) -> Result<()> {
+    /// Starts a loopback sign-in: listens on a random 127.0.0.1 port that
+    /// Google redirects to. Show [`LoopbackSignIn::url`] in a browser, then
+    /// call [`Auth::finish_loopback_sign_in`] (blocking).
+    pub fn start_loopback_sign_in(&self) -> Result<LoopbackSignIn> {
         let listener =
             std::net::TcpListener::bind("127.0.0.1:0").context("binding loopback port")?;
         let redirect_uri = format!("http://127.0.0.1:{}", listener.local_addr()?.port());
         let request = self.begin_sign_in(&redirect_uri)?;
+        Ok(LoopbackSignIn {
+            listener,
+            request,
+            cancelled: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    /// Waits (up to 5 minutes, or until cancelled) for the redirect, then
+    /// exchanges the code and stores the refresh token.
+    pub fn finish_loopback_sign_in(&self, pending: &LoopbackSignIn) -> Result<()> {
+        let code = loopback::wait_for_code(&pending.listener, &pending.request.state, &pending.cancelled)?;
+        self.complete_sign_in(&pending.request, &code)
+    }
+
+    /// Desktop sign-in: opens the system browser and waits (blocking).
+    #[cfg(feature = "loopback-auth")]
+    pub fn sign_in(&self) -> Result<()> {
+        let pending = self.start_loopback_sign_in()?;
         log::info!("opening browser for Google sign-in");
-        open::that_detached(&request.url).context("opening browser")?;
-        let code = loopback::wait_for_code(&listener, &request.state)?;
-        self.complete_sign_in(&request, &code)
+        open::that_detached(pending.url()).context("opening browser")?;
+        self.finish_loopback_sign_in(&pending)
+    }
+}
+
+/// A loopback sign-in in progress.
+pub struct LoopbackSignIn {
+    listener: std::net::TcpListener,
+    request: AuthRequest,
+    cancelled: std::sync::atomic::AtomicBool,
+}
+
+impl LoopbackSignIn {
+    /// The Google consent page to show.
+    pub fn url(&self) -> &str {
+        &self.request.url
+    }
+
+    /// Makes a pending `finish_loopback_sign_in` return an error.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -236,20 +272,27 @@ fn random_token(bytes: usize) -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(buf))
 }
 
-#[cfg(feature = "loopback-auth")]
 mod loopback {
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
     use anyhow::{Result, anyhow, bail};
 
     const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
-    pub(super) fn wait_for_code(listener: &TcpListener, expected_state: &str) -> Result<String> {
+    pub(super) fn wait_for_code(
+        listener: &TcpListener,
+        expected_state: &str,
+        cancelled: &AtomicBool,
+    ) -> Result<String> {
         listener.set_nonblocking(true)?;
         let deadline = Instant::now() + SIGN_IN_TIMEOUT;
         loop {
+            if cancelled.load(Ordering::Relaxed) {
+                bail!("sign-in cancelled");
+            }
             match listener.accept() {
                 Ok((stream, _)) => {
                     stream.set_nonblocking(false)?;

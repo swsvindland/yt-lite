@@ -1,6 +1,53 @@
-# iPhone app plan (SwiftUI on `yt-lite-core`)
+# iPhone app (SwiftUI on `yt-lite-core`)
 
-Status: design only. What already exists and is verified is marked ✅.
+Status: **built and running in the simulator** (2026-10-08). Explore, Search and playback were
+checked there end to end. Sign-in and running on a real device haven't been tried yet.
+
+## Run it on your iPhone
+
+```sh
+scripts/build-ios.sh          # Rust core -> ios/Generated/YtLiteCore.xcframework + Swift bindings
+open ios/YtLite.xcodeproj
+```
+
+1. In Xcode: select the **YtLite** target → **Signing & Capabilities** → **Team**: your Apple ID
+   ("Personal Team"). If Xcode says the bundle id is taken, change `local.ytlite.ios` to
+   anything unique.
+2. Plug in the iPhone, select it as the run destination, and press **Run** (⌘R).
+3. On the phone: enable **Settings → Privacy & Security → Developer Mode** (it restarts), then
+   trust your certificate under **Settings → General → VPN & Device Management**.
+4. With a free Apple ID the install expires after **7 days**; press Run again to renew.
+
+Re-run `scripts/build-ios.sh` after changing Rust code. It also copies the Google OAuth client
+from your desktop `config.toml` into the gitignored `ios/YtLite/Secrets.swift`, so the phone uses
+the same "Desktop app" client. Sign-in shows Google's page in an in-app browser that redirects to
+a loopback port the Rust core listens on, so there's nothing new to set up in Google Cloud.
+
+## What's in it
+
+- Tabs: **Subscriptions** (sign in), **For you**, **Explore** (topic chips), **Search**, **Settings**
+  (account, max quality, hide watched).
+- Pull to refresh; long-press a video to mark it watched/unwatched or share it.
+- Playback: `AVPlayerViewController` presented modally with the resolver's HLS stream. You get
+  native controls, Picture in Picture, AirPlay and background audio, capped with
+  `preferredMaximumResolution`.
+- Thumbnails load straight from `i.ytimg.com` via `AsyncImage`/`URLCache`.
+- Data lives in the app container (`Application Support/yt-lite`), and the refresh token in the
+  iOS Keychain.
+
+## Layout
+
+```
+crates/ffi/                 UniFFI wrapper (YtLite object: refresh / videos / search / explore /
+                            play / sign-in); builds staticlib (iOS) + cdylib (bindgen)
+scripts/build-ios.sh        cargo (aarch64-apple-ios, aarch64-apple-ios-sim) -> xcframework,
+                            uniffi-bindgen -> Swift, Secrets.swift
+ios/YtLite.xcodeproj        app target; YtLite/ is a synchronized folder (new files are picked up)
+ios/YtLite/*.swift          SwiftUI app
+ios/Info.plist              background audio (other keys are generated from build settings)
+```
+
+## Design notes
 
 ## Why it fits
 
@@ -19,19 +66,6 @@ The app can't use mpv or yt-dlp on iOS, so the native resolver is required there
 optional. If YouTube breaks the `visionos` client, the iPhone app breaks until the constants
 are updated.
 
-## Shape
-
-```
-crates/core/        (exists) blocking Rust API
-crates/ffi/         new: UniFFI wrapper, a thin facade over core
-  YtLite object:    new(root_dir, client_id) · refresh() -> Stats · feed(query) -> [Video]
-                    set_watched(id, bool) · resolve(id, max_tier) -> Resolved
-                    begin_sign_in(redirect) -> AuthRequest · complete_sign_in(req, code)
-                    thumbnail(id) -> Data (JPEG bytes from the disk cache)
-ios/YtLite.xcodeproj  new: SwiftUI app
-scripts/build-ios.sh  new: cargo build for aarch64-apple-ios + aarch64-apple-ios-sim,
-                      lipo/xcodebuild -create-xcframework, uniffi-bindgen → Swift
-```
 
 - **FFI:** [UniFFI](https://mozilla.github.io/uniffi-rs/) generates Swift bindings from
   `#[uniffi::export]` annotations. Calls are blocking; Swift wraps them in

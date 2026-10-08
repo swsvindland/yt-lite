@@ -1,0 +1,166 @@
+import Foundation
+import Observation
+
+/// A video ready for the player.
+struct PlayItem: Identifiable {
+    let id: String
+    let url: URL
+    let title: String
+    let maxHeight: Int
+}
+
+/// Owns the Rust core (`YtLite`). Every core call is blocking, so it runs on
+/// a background task via `background { }`.
+@Observable
+@MainActor
+final class AppModel {
+    private(set) var core: YtLite?
+    var signedIn = false
+    var signingIn = false
+    var resolving = false
+    var errorMessage: String?
+    /// Bumped when watched state changes so screens can reload.
+    var watchedVersion = 0
+
+    var maxHeight: Int = UserDefaults.standard.object(forKey: "maxHeight") as? Int ?? 1080 {
+        didSet { UserDefaults.standard.set(maxHeight, forKey: "maxHeight") }
+    }
+
+    var hideWatched: Bool = UserDefaults.standard.bool(forKey: "hideWatched") {
+        didSet {
+            UserDefaults.standard.set(hideWatched, forKey: "hideWatched")
+            watchedVersion += 1
+        }
+    }
+
+    init() {
+        do {
+            let root = try FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+            ).appendingPathComponent("yt-lite", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let core = try YtLite(
+                rootDir: root.path,
+                clientId: Secrets.googleClientId,
+                clientSecret: Secrets.googleClientSecret
+            )
+            self.core = core
+            Task { self.signedIn = (try? await background { core.isSignedIn() }) ?? false }
+        } catch {
+            errorMessage = "Couldn't start: \(describe(error))"
+        }
+    }
+
+    var hasGoogleClient: Bool { core?.hasGoogleClient() ?? false }
+
+    func videos(_ feed: Feed) async throws -> [Video] {
+        guard let core else { return [] }
+        let hide = hideWatched
+        return try await background { try core.videos(feed: feed, hideWatched: hide) }
+    }
+
+    func refresh(_ feed: Feed) async throws {
+        guard let core else { return }
+        _ = try await background { try core.refresh(feed: feed) }
+    }
+
+    func search(_ query: String) async throws -> [Video] {
+        guard let core else { return [] }
+        return try await background { try core.search(query: query) }
+    }
+
+    func explore(topic: Int) async throws -> [Video] {
+        guard let core else { return [] }
+        return try await background { try core.explore(topic: UInt32(topic)) }
+    }
+
+    var exploreTopics: [String] { core?.exploreTopics() ?? [] }
+
+    func setWatched(_ video: Video, _ watched: Bool) {
+        guard let core else { return }
+        Task {
+            try? await background { try core.setWatched(id: video.id, watched: watched) }
+            watchedVersion += 1
+        }
+    }
+
+    func play(_ video: Video) {
+        guard let core, !resolving else { return }
+        resolving = true
+        let maxHeight = maxHeight
+        Task {
+            defer { resolving = false }
+            do {
+                let playable = try await background { try core.play(id: video.id, maxHeight: UInt32(maxHeight)) }
+                guard let url = URL(string: playable.url) else { return }
+                PlayerPresenter.shared.present(PlayItem(id: video.id, url: url, title: video.title, maxHeight: maxHeight))
+                setWatched(video, true)
+            } catch {
+                errorMessage = describe(error)
+            }
+        }
+    }
+
+    func signIn() {
+        guard let core, !signingIn else { return }
+        signingIn = true
+        Task {
+            defer { signingIn = false }
+            do {
+                let pending = try await background { try core.startSignIn() }
+                guard let url = URL(string: pending.url()) else { return }
+                let session = WebAuth.start(url: url) { pending.cancel() }
+                defer { session.cancel() }
+                try await background { try core.finishSignIn(signIn: pending) }
+                signedIn = true
+            } catch let error as FfiError {
+                if case .Failed(let message) = error, message.contains("cancelled") { return }
+                errorMessage = describe(error)
+            } catch {
+                errorMessage = describe(error)
+            }
+        }
+    }
+
+    func signOut() {
+        guard let core else { return }
+        Task {
+            try? await background { try core.signOut() }
+            signedIn = false
+        }
+    }
+}
+
+/// Runs blocking work off the main actor.
+func background<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await Task.detached(priority: .userInitiated) { try work() }.value
+}
+
+/// A readable message for errors from the Rust core (UniFFI's default
+/// description is the debug form).
+func describe(_ error: Error) -> String {
+    switch error as? FfiError {
+    case .NotSignedIn: "Sign in with Google in Settings to load your subscriptions."
+    case .Failed(let message): message
+    case nil: error.localizedDescription
+    }
+}
+
+extension Video: Identifiable {}
+
+extension Video {
+    var thumbnailURL: URL? { URL(string: "https://i.ytimg.com/vi/\(id)/mqdefault.jpg") }
+
+    var durationText: String? {
+        if live { return "LIVE" }
+        guard let secs = durationSecs, secs > 0 else { return nil }
+        let h = secs / 3600, m = (secs % 3600) / 60, s = secs % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+
+    var ageText: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: Date(timeIntervalSince1970: TimeInterval(published)), relativeTo: .now)
+    }
+}

@@ -20,7 +20,8 @@ never loads YouTube's web player or a web view.
 - Low memory: virtualized grid, byte-capped thumbnail cache, idle trimming, and a live RSS readout
 
 Primary target is Windows 11; macOS is supported too (menu bar, ⌘ shortcuts, `.app` bundle).
-The UI-independent core also builds for iOS; see [docs/ios.md](docs/ios.md).
+There's also a SwiftUI **iPhone app** on the same Rust core: `scripts/build-ios.sh`, then open
+`ios/YtLite.xcodeproj`. See [docs/ios.md](docs/ios.md).
 
 ---
 
@@ -395,7 +396,9 @@ crates/desktop/      yt-lite: GPUI app
   src/ui/              app shell + sidebar, feed grid, settings, shared thumbnail store
 crates/winplayer/     Windows MediaPlayer window (pure-Rust bindings; type-checks from any host
                      with `cargo check -p yt-lite-winplayer --target x86_64-pc-windows-msvc`)
-scripts/bundle-macos.sh
+crates/ffi/          UniFFI bindings for the iPhone app
+ios/                 SwiftUI iPhone app (see docs/ios.md)
+scripts/bundle-macos.sh, scripts/build-ios.sh
 docs/ios.md          plan for a SwiftUI iPhone app on the same core
 ```
 
@@ -405,7 +408,7 @@ docs/ios.md          plan for a SwiftUI iPhone app on the same core
   For you.
 - Search pagination (continuations) and channel pages.
 - **Embedded libmpv** inside the GPUI window.
-- **iPhone app** in SwiftUI on `yt-lite-core`, see [docs/ios.md](docs/ios.md).
+
 - **Search.**
 
 Non-goals: comments, uploading, live chat, notifications, Shorts, multiple accounts, mobile.

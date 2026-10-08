@@ -26,7 +26,7 @@ struct RootView: View {
     var body: some View {
         TabView {
             FeedScreen(feed: .subscriptions, title: "Subscriptions")
-                .tabItem { Label("Subscriptions", systemImage: "rectangle.stack") }
+                .tabItem { Label("Subs", systemImage: "rectangle.stack") }
             FeedScreen(feed: .forYou, title: "For you")
                 .tabItem { Label("For you", systemImage: "star") }
             ExploreScreen()

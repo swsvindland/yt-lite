@@ -65,8 +65,23 @@ impl Auth {
         }
     }
 
-    fn entry(&self) -> Result<keyring::Entry> {
-        keyring::Entry::new(&self.keyring_service, KEYRING_USER).context("opening credential store")
+    fn entry(&self) -> Result<CredentialEntry> {
+        open_entry(&self.keyring_service, KEYRING_USER).context("opening credential store")
+    }
+
+    /// `None` if the credential store can save tokens, otherwise why not.
+    /// Writes and deletes a probe entry, so front-ends can warn before a
+    /// sign-in that couldn't be saved.
+    pub fn credential_store_problem(&self) -> Option<String> {
+        let probe = || -> Result<()> {
+            let entry = open_entry(&self.keyring_service, "store-probe").context("opening credential store")?;
+            entry.set_password("ok").context("writing to credential store")?;
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(e) => Err(anyhow!(e).context("deleting from credential store")),
+            }
+        };
+        probe().err().map(|e| format!("{e:#}"))
     }
 
     fn refresh_token(&self) -> Result<Option<String>> {
@@ -256,6 +271,35 @@ impl LoopbackSignIn {
     pub fn cancel(&self) {
         self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// Desktop: keyring's all-in-one API picks the platform store (macOS
+/// Keychain, Windows Credential Manager, Secret Service).
+#[cfg(not(target_os = "ios"))]
+type CredentialEntry = keyring::Entry;
+
+#[cfg(not(target_os = "ios"))]
+fn open_entry(service: &str, user: &str) -> keyring::Result<CredentialEntry> {
+    keyring::Entry::new(service, user)
+}
+
+/// iOS: keyring's all-in-one API has no iOS store, so register the
+/// data-protection keychain store with keyring-core once and use it directly.
+#[cfg(target_os = "ios")]
+type CredentialEntry = keyring_core::Entry;
+
+#[cfg(target_os = "ios")]
+fn open_entry(service: &str, user: &str) -> keyring::Result<CredentialEntry> {
+    static INIT: std::sync::OnceLock<keyring::Result<()>> = std::sync::OnceLock::new();
+    let init = INIT.get_or_init(|| {
+        let store = apple_native_keyring_store::protected::Store::new()?;
+        keyring_core::set_default_store(store);
+        Ok(())
+    });
+    if let Err(e) = init {
+        return Err(keyring::Error::PlatformFailure(e.to_string().into()));
+    }
+    keyring_core::Entry::new(service, user)
 }
 
 /// An in-progress sign-in (PKCE verifier and CSRF state).

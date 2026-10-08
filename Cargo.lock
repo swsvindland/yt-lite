@@ -9496,6 +9496,7 @@ dependencies = [
  "directories",
  "getrandom 0.4.3",
  "keyring",
+ "keyring-core",
  "log",
  "open",
  "roxmltree 0.21.1",

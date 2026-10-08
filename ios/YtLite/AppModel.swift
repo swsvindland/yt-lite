@@ -21,6 +21,8 @@ final class AppModel {
     var errorMessage: String?
     /// Bumped when watched state changes so screens can reload.
     var watchedVersion = 0
+    /// Set if the iOS Keychain can't store the sign-in token.
+    var credentialProblem: String?
 
     var maxHeight: Int = UserDefaults.standard.object(forKey: "maxHeight") as? Int ?? 1080 {
         didSet { UserDefaults.standard.set(maxHeight, forKey: "maxHeight") }
@@ -45,7 +47,10 @@ final class AppModel {
                 clientSecret: Secrets.googleClientSecret
             )
             self.core = core
-            Task { self.signedIn = (try? await background { core.isSignedIn() }) ?? false }
+            Task {
+                self.signedIn = (try? await background { core.isSignedIn() }) ?? false
+                self.credentialProblem = try? await background { core.credentialStoreProblem() }
+            }
         } catch {
             errorMessage = "Couldn't start: \(describe(error))"
         }
@@ -103,6 +108,10 @@ final class AppModel {
 
     func signIn() {
         guard let core, !signingIn else { return }
+        if let credentialProblem {
+            errorMessage = "Can't save the sign-in: \(credentialProblem)"
+            return
+        }
         signingIn = true
         Task {
             defer { signingIn = false }

@@ -191,7 +191,7 @@ struct SettingsScreen: View {
         @Bindable var model = model
         NavigationStack {
             Form {
-                Section("YouTube account") {
+                Section {
                     if model.signedIn {
                         Label("Signed in", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                         Button("Sign out", role: .destructive) { model.signOut() }
@@ -206,6 +206,13 @@ struct SettingsScreen: View {
                         Text("No Google OAuth client was bundled. Run scripts/build-ios.sh on a Mac whose desktop config has one.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("YouTube account")
+                } footer: {
+                    if let problem = model.credentialProblem {
+                        Label("Keychain unavailable: \(problem)", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
                     }
                 }
                 Section("Playback") {

@@ -7,17 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A10000000000000000000001 /* YtLiteCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* YtLiteCore.xcframework */; };
+		A10000000000000000000001 /* Generated/YtLiteCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* Generated/YtLiteCore.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		A10000000000000000000002 /* YtLiteCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Generated/YtLiteCore.xcframework; sourceTree = "<group>"; };
+		A10000000000000000000002 /* Generated/YtLiteCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Generated/YtLiteCore.xcframework; sourceTree = "<group>"; };
 		A10000000000000000000003 /* YtLite.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = YtLite.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		A10000000000000000000010 /* YtLite */ = {isa = PBXFileSystemSynchronizedRootGroup; path = YtLite; sourceTree = "<group>"; };
+		A10000000000000000000010 /* YtLite */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = YtLite;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -25,7 +29,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000000000000000000001 /* YtLiteCore.xcframework in Frameworks */,
+				A10000000000000000000001 /* Generated/YtLiteCore.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -45,7 +49,7 @@
 		A10000000000000000000031 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				A10000000000000000000002 /* YtLiteCore.xcframework */,
+				A10000000000000000000002 /* Generated/YtLiteCore.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";

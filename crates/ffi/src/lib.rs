@@ -163,6 +163,11 @@ impl YtLite {
         self.services.auth.is_signed_in()
     }
 
+    /// `None` if tokens can be saved; otherwise the credential-store error.
+    pub fn credential_store_problem(&self) -> Option<String> {
+        self.services.auth.credential_store_problem()
+    }
+
     pub fn has_google_client(&self) -> bool {
         self.services.config.has_google_client()
     }

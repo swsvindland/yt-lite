@@ -37,6 +37,8 @@ base64 = "0.23"
 getrandom = "0.4"
 open = { version = "5.4", optional = true }
 
-# keyring's Apple store must use the data-protection keychain on iOS.
+# keyring's all-in-one API doesn't set up a store on iOS; there we use
+# keyring-core directly with the data-protection (iOS) keychain store.
 [target.'cfg(target_os = "ios")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["protected"] }
+keyring-core = "1"

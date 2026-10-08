@@ -10,9 +10,10 @@ scripts/build-ios.sh          # Rust core -> ios/Generated/YtLiteCore.xcframewor
 open ios/YtLite.xcodeproj
 ```
 
-1. In Xcode: select the **YtLite** target → **Signing & Capabilities** → **Team**: your Apple ID
-   ("Personal Team"). If Xcode says the bundle id is taken, change `local.ytlite.ios` to
-   anything unique.
+1. Put your Apple Developer Team ID in `ios/Local.xcconfig` (gitignored, so it stays out of the
+   repo): `DEVELOPMENT_TEAM = ABCDE12345`. Find it in Xcode → Settings → Accounts. Choosing the
+   team in Xcode's Signing tab works too, but writes it into the committed project file. If Xcode
+   says the bundle id is taken, change `local.ytlite.ios` to anything unique.
 2. Plug in the iPhone, select it as the run destination, and press **Run** (⌘R).
 3. On the phone: enable **Settings → Privacy & Security → Developer Mode** (it restarts), then
    trust your certificate under **Settings → General → VPN & Device Management**.

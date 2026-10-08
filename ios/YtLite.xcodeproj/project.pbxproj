@@ -14,6 +14,7 @@
 		A10000000000000000000002 /* Generated/YtLiteCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Generated/YtLiteCore.xcframework; sourceTree = "<group>"; };
 		A10000000000000000000003 /* YtLite.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = YtLite.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000005 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -41,6 +42,7 @@
 			children = (
 				A10000000000000000000010 /* YtLite */,
 				A10000000000000000000004 /* Info.plist */,
+				A10000000000000000000005 /* Config.xcconfig */,
 				A10000000000000000000031 /* Frameworks */,
 				A10000000000000000000032 /* Products */,
 			);
@@ -173,6 +175,7 @@
 		};
 		A10000000000000000000082 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000005 /* Config.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -201,6 +204,7 @@
 		};
 		A10000000000000000000083 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000005 /* Config.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

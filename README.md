@@ -8,6 +8,12 @@ resolved natively in Rust (~0.2 s) and played by the operating system's own medi
 [yt-dlp](https://github.com/yt-dlp/yt-dlp), if installed, is a fallback resolver. The app
 never loads YouTube's web player or a web view.
 
+> **Unofficial personal project.** yt-lite is not affiliated with, endorsed by, or connected to
+> YouTube or Google. It uses YouTube's public RSS feeds, the YouTube Data API with your own OAuth
+> client, and YouTube's undocumented internal API, which may change or break at any time. Using
+> third-party clients may conflict with YouTube's Terms of Service; use it at your own discretion.
+> No credentials, tokens or Google OAuth clients are included in this repository.
+
 - Sidebar with **Subscriptions** (chronological), **For you** (recommendations), **Explore**
   (popular this week by topic), **Search** and **Settings**. Everything except Subscriptions
   works without signing in.
@@ -412,3 +418,7 @@ docs/ios.md          plan for a SwiftUI iPhone app on the same core
 - **Search.**
 
 Non-goals: comments, uploading, live chat, notifications, Shorts, multiple accounts, mobile.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

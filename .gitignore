@@ -10,3 +10,4 @@
 xcuserdata/
 *.xcuserstate
 /ios/build/
+/ios/Local.xcconfig

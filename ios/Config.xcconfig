@@ -1,0 +1,12 @@
+// Shared build settings for the YtLite target.
+//
+// Personal settings (your Apple Developer Team ID) go in Local.xcconfig next to
+// this file, which is gitignored:
+//
+//     DEVELOPMENT_TEAM = ABCDE12345
+//
+// Find your Team ID in Xcode → Settings → Accounts, or at developer.apple.com → Membership.
+// Setting the team in Xcode's Signing tab also works, but writes it into the
+// (committed) project file instead.
+
+#include? "Local.xcconfig"

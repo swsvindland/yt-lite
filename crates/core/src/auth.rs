@@ -38,6 +38,9 @@ pub struct Auth {
     google: GoogleConfig,
     http: Http,
     access: Mutex<Option<(String, Instant)>>,
+    /// The refresh token, read from the credential store at most once per run.
+    /// (On macOS every read of a Keychain item can prompt the user.)
+    refresh: Mutex<Option<Option<String>>>,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +56,7 @@ impl Auth {
             google,
             http,
             access: Mutex::new(None),
+            refresh: Mutex::new(None),
         }
     }
 
@@ -60,7 +64,17 @@ impl Auth {
         keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).context("opening credential store")
     }
 
-    fn refresh_token() -> Result<Option<String>> {
+    fn refresh_token(&self) -> Result<Option<String>> {
+        let mut cached = self.refresh.lock().unwrap();
+        if let Some(token) = cached.as_ref() {
+            return Ok(token.clone());
+        }
+        let token = Self::read_refresh_token()?;
+        *cached = Some(token.clone());
+        Ok(token)
+    }
+
+    fn read_refresh_token() -> Result<Option<String>> {
         match Self::entry()?.get_password() {
             Ok(t) => Ok(Some(t)),
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -69,11 +83,12 @@ impl Auth {
     }
 
     pub fn is_signed_in(&self) -> bool {
-        matches!(Self::refresh_token(), Ok(Some(_)))
+        matches!(self.refresh_token(), Ok(Some(_)))
     }
 
     pub fn sign_out(&self) -> Result<()> {
         *self.access.lock().unwrap() = None;
+        *self.refresh.lock().unwrap() = Some(None);
         match Self::entry()?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
@@ -92,7 +107,7 @@ impl Auth {
         {
             return Ok(tok.clone());
         }
-        let refresh = Self::refresh_token()?.ok_or(NotSignedIn)?;
+        let refresh = self.refresh_token()?.ok_or(NotSignedIn)?;
         let resp: TokenResponse = self
             .http
             .post_form(
@@ -181,6 +196,7 @@ impl Auth {
         Self::entry()?
             .set_password(refresh)
             .context("saving refresh token to credential store")?;
+        *self.refresh.lock().unwrap() = Some(Some(refresh.to_string()));
         self.store_access(&resp);
         log::info!("signed in");
         Ok(())

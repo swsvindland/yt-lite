@@ -31,8 +31,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature so Gatekeeper and the Keychain treat it as one app.
-codesign --force --deep --sign - "$APP"
+# Stable signature so Keychain "Always Allow" survives rebuilds.
+"$(dirname "$0")/macos-sign.sh" "$APP"
 echo "Built $APP"
 
 if [[ "${1:-}" == "--install" ]]; then

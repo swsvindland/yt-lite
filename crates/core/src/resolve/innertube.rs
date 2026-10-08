@@ -132,18 +132,46 @@ impl StreamResolver for InnertubeResolver {
     }
 
     fn resolve(&self, video_id: &str, prefs: &Prefs) -> Result<Resolved> {
-        let visitor = self.visitor.lock().unwrap().clone();
-        let mut resp = self.player(video_id, visitor.as_deref())?;
-        if let Some(fresh) = resp.visitor_data() {
-            let retry = resp.status() == "LOGIN_REQUIRED" && visitor.as_deref() != Some(fresh);
-            let fresh = fresh.to_string();
-            self.set_visitor(&fresh);
-            if retry {
-                log::debug!("player: LOGIN_REQUIRED, retrying with fresh visitor data");
-                resp = self.player(video_id, Some(&fresh))?;
-            }
+        let cached = self.visitor.lock().unwrap().clone();
+        let (resp, visitor) = with_session(cached.as_deref(), |v| self.player(video_id, v))?;
+        if let Some(v) = &visitor {
+            self.set_visitor(v);
         }
         interpret(video_id, resp, prefs)
+    }
+}
+
+/// Runs `player` (one request with the given visitor data), starting a new
+/// visitor session if YouTube rejects the current one. Returns the final
+/// response and the visitor data to keep.
+///
+/// LOGIN_REQUIRED ("confirm you're not a bot") means YouTube didn't accept
+/// the visitor data: there was none, or the saved session has since been
+/// flagged. YouTube may keep re-issuing a flagged session, so a new one
+/// comes from a request without visitor data. If that one is rejected too,
+/// the block is on the IP address and the LOGIN_REQUIRED response is final.
+fn with_session(
+    cached: Option<&str>,
+    mut player: impl FnMut(Option<&str>) -> Result<PlayerResponse>,
+) -> Result<(PlayerResponse, Option<String>)> {
+    let resp = player(cached)?;
+    if resp.status() != "LOGIN_REQUIRED" {
+        let keep = resp.visitor_data().or(cached).map(str::to_string);
+        return Ok((resp, keep));
+    }
+    let fresh = match cached {
+        None => resp.visitor_data().map(str::to_string),
+        Some(_) => {
+            log::debug!("player: LOGIN_REQUIRED with saved visitor data, starting a new session");
+            player(None)?.visitor_data().map(str::to_string)
+        }
+    };
+    match fresh {
+        Some(fresh) if cached != Some(fresh.as_str()) => {
+            log::debug!("player: retrying with fresh visitor data");
+            Ok((player(Some(&fresh))?, Some(fresh)))
+        }
+        _ => Ok((resp, cached.map(str::to_string))),
     }
 }
 
@@ -293,6 +321,78 @@ mod tests {
         let u = err.downcast_ref::<Unplayable>().unwrap();
         assert_eq!(u.status, "LOGIN_REQUIRED");
         assert!(u.reason.as_deref().unwrap().contains("not a bot"));
+    }
+
+    fn pr(status: &str, visitor: &str) -> PlayerResponse {
+        serde_json::from_value(json!({
+            "responseContext": { "visitorData": visitor },
+            "playabilityStatus": { "status": status },
+        }))
+        .unwrap()
+    }
+
+    /// Runs [`with_session`] against canned responses, recording the
+    /// visitor data each request was sent with.
+    fn session(
+        cached: Option<&str>,
+        responses: Vec<PlayerResponse>,
+    ) -> (String, Option<String>, Vec<Option<String>>) {
+        let mut responses = responses.into_iter();
+        let mut sent = vec![];
+        let (resp, keep) = with_session(cached, |v| {
+            sent.push(v.map(str::to_string));
+            Ok(responses.next().expect("unexpected extra request"))
+        })
+        .unwrap();
+        (resp.status().to_string(), keep, sent)
+    }
+
+    #[test]
+    fn saved_session_is_used_as_is() {
+        let (status, keep, sent) = session(Some("V"), vec![pr("OK", "V")]);
+        assert_eq!(status, "OK");
+        assert_eq!(keep.as_deref(), Some("V"));
+        assert_eq!(sent, [Some("V".into())]);
+    }
+
+    #[test]
+    fn first_run_bootstraps_a_session() {
+        let (status, keep, sent) = session(None, vec![pr("LOGIN_REQUIRED", "F"), pr("OK", "F")]);
+        assert_eq!(status, "OK");
+        assert_eq!(keep.as_deref(), Some("F"));
+        assert_eq!(sent, [None, Some("F".into())]);
+    }
+
+    #[test]
+    fn flagged_saved_session_is_replaced() {
+        // YouTube re-issues the flagged session; a request without visitor
+        // data gets a new one.
+        let (status, keep, sent) = session(
+            Some("V"),
+            vec![
+                pr("LOGIN_REQUIRED", "V"),
+                pr("LOGIN_REQUIRED", "F"),
+                pr("OK", "F"),
+            ],
+        );
+        assert_eq!(status, "OK");
+        assert_eq!(keep.as_deref(), Some("F"));
+        assert_eq!(sent, [Some("V".into()), None, Some("F".into())]);
+    }
+
+    #[test]
+    fn blocked_ip_gives_up_after_a_new_session() {
+        let (status, keep, sent) = session(
+            Some("V"),
+            vec![
+                pr("LOGIN_REQUIRED", "V"),
+                pr("LOGIN_REQUIRED", "F"),
+                pr("LOGIN_REQUIRED", "F"),
+            ],
+        );
+        assert_eq!(status, "LOGIN_REQUIRED");
+        assert_eq!(keep.as_deref(), Some("F"));
+        assert_eq!(sent.len(), 3);
     }
 
     #[test]

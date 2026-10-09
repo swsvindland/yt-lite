@@ -15,8 +15,9 @@ never loads YouTube's web player or a web view.
 > No credentials, tokens or Google OAuth clients are included in this repository.
 
 - Sidebar with **Subscriptions** (chronological), **For you** (recommendations), **Explore**
-  (popular this week by topic), **Search** and **Settings**. Everything except Subscriptions
-  works without signing in.
+  (popular this week by topic), **Search**, **History** (everything you've played or marked
+  watched, most recent first; remove videos or clear it) and **Settings**. Everything except
+  Subscriptions works without signing in.
 - Responsive grid: thumbnail, title, channel, duration, age
 - **No Shorts, anywhere.** Filtered centrally for every feed source; the filter fails closed
 - Click a video to play it in a native player window (1080p max by default). It resumes where

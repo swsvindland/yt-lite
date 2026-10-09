@@ -100,7 +100,7 @@ class PlaybackService : MediaLibraryService() {
         // Android Auto's lists show progress; refresh them when it changes.
         scope.launch {
             model.libraryVersion.drop(1).collect {
-                for (id in listOf(LibraryTree.SUBSCRIPTIONS, LibraryTree.FOR_YOU)) {
+                for (id in listOf(LibraryTree.SUBSCRIPTIONS, LibraryTree.FOR_YOU, LibraryTree.HISTORY)) {
                     session.notifyChildrenChanged(id, Int.MAX_VALUE, null)
                 }
             }
@@ -161,6 +161,7 @@ class PlaybackService : MediaLibraryService() {
             live = playable.isLive,
             watched = false,
             progress = null,
+            lastPlayed = null,
         )
         return VideoItems.playable(video, playable) to (playable.startSecs * 1000).toLong()
     }

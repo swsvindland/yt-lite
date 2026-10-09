@@ -22,13 +22,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 }
 
-/// Tabs for Subscriptions, For you and Explore. Choosing a video plays it
+/// Tabs for Subscriptions, For you, Explore and History. Choosing a video plays it
 /// audio only (never video in the car) and opens the system Now Playing
 /// screen, whose metadata and controls come from `NowPlaying`.
 @MainActor
 final class CarPlayController: NSObject, CPTabBarTemplateDelegate {
     private let interface: CPInterfaceController
     private let model = AppModel.shared
+    /// Subscriptions, For you and History: the lists reloaded when anything changes.
     private let feeds: [VideoList]
     /// The Explore topic on screen, if any.
     private var topic: VideoList?
@@ -50,9 +51,16 @@ final class CarPlayController: NSObject, CPTabBarTemplateDelegate {
                 load: { try await model.videos(.forYou) },
                 fetch: { try await model.refresh(.forYou) }
             ),
+            VideoList(
+                title: "History", icon: "clock",
+                empty: ("No history yet", "Videos you play show up here, most recent first."),
+                load: { try await model.history() }
+            ),
         ]
         super.init()
-        let tabs = CPTabBarTemplate(templates: feeds.map(\.template) + [exploreTemplate()])
+        let tabs = CPTabBarTemplate(
+            templates: [feeds[0].template, feeds[1].template, exploreTemplate(), feeds[2].template]
+        )
         tabs.delegate = self
         interface.setRootTemplate(tabs, animated: false, completion: nil)
         for list in feeds {
@@ -241,7 +249,7 @@ private final class VideoList {
     let feed: Feed?
     /// Title and subtitle when there are no videos.
     let empty: (String, String)
-    /// What to show (the cache for feeds; a network call for Explore).
+    /// What to show (the cache for feeds and History; a network call for Explore).
     let load: () async throws -> [Video]
     /// Refreshes the cache from YouTube; nil for Explore topics.
     let fetch: (() async throws -> Void)?

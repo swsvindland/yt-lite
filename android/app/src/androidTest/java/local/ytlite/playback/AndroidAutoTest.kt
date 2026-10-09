@@ -57,7 +57,7 @@ class AndroidAutoTest {
         }
         assertTrue("connected", connected.await(20, TimeUnit.SECONDS))
         assertTrue("root children", children.await(20, TimeUnit.SECONDS))
-        assertEquals(listOf("Subscriptions", "For you", "Explore"), tabs)
+        assertEquals(listOf("Subscriptions", "For you", "Explore", "History"), tabs)
         assertTrue(extras!!.getBoolean("android.media.browse.SEARCH_SUPPORTED"))
         Handler(Looper.getMainLooper()).post { browser.disconnect() }
     }

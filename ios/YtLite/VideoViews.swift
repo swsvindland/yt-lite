@@ -1,14 +1,16 @@
 import SwiftUI
 
 /// Adaptive grid of video cards: one column on iPhone, more on iPad.
+/// `inHistory`: cards say when they were watched and can be removed.
 struct VideoGrid: View {
     @Environment(AppModel.self) private var model
     let videos: [Video]
+    var inHistory = false
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 16)], spacing: 20) {
             ForEach(videos) { video in
-                VideoCard(video: video)
+                VideoCard(video: video, inHistory: inHistory)
                     .onTapGesture { model.play(video) }
                     .contextMenu {
                         Button {
@@ -37,6 +39,13 @@ struct VideoGrid: View {
                             )
                         }
                         ShareLink(item: URL(string: "https://www.youtube.com/watch?v=\(video.id)")!)
+                        if inHistory {
+                            Button(role: .destructive) {
+                                model.removeFromHistory(video)
+                            } label: {
+                                Label("Remove from history", systemImage: "minus.circle")
+                            }
+                        }
                     }
             }
         }
@@ -46,6 +55,7 @@ struct VideoGrid: View {
 
 struct VideoCard: View {
     let video: Video
+    var inHistory = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -75,7 +85,7 @@ struct VideoCard: View {
                 Text(video.title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(2)
-                Text("\(video.channel) · \(video.ageText)")
+                Text("\(video.channel) · \((inHistory ? video.watchedText : nil) ?? video.ageText)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

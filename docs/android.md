@@ -31,8 +31,10 @@ this is a personal sideloaded app.
   launcher icon.
 - **Adaptive layout**: a bottom bar on phones, a navigation rail on tablets, foldables and in
   landscape (`NavigationSuiteScaffold`); the video grid adds columns as it gets wider.
-- Tabs: **Subscriptions** (sign in), **For you**, **Explore** (topic chips), **Search**, **Settings**.
-  Pull to refresh; long-press a video for Watch / Listen / Start over / Mark watched / Share.
+- Tabs: **Subscriptions** (sign in), **For you**, **Explore** (topic chips), **Search**, **You**:
+  your **History** (everything played or marked watched, most recent first, with progress;
+  remove videos or clear it) and, behind the gear, **Settings**. Pull to refresh; long-press a
+  video for Watch / Listen / Start over / Mark watched / Share (and Remove from history).
 - **Playback** runs in a Media3 `MediaLibraryService` (`PlaybackService`) with ExoPlayer, so it
   survives leaving the app: the system media controls (notification, lock screen, Bluetooth)
   come with it, with back 10 s / forward 30 s.
@@ -45,8 +47,8 @@ this is a personal sideloaded app.
     in a mini player above the tabs.
 - **Progress**: resumes where you stopped; watched once played to the end (the shared rules in
   `yt-lite-core`'s `progress.rs`). The service saves on pause, close, the end, and every 10 s.
-- **Android Auto**: Subscriptions, For you and Explore (topic → videos) as tabs, search, progress
-  on every video, and the Now Playing screen. Videos play audio only. See below.
+- **Android Auto**: Subscriptions, For you, Explore (topic → videos) and History as tabs, search,
+  progress on every video, and the Now Playing screen. Videos play audio only. See below.
 - Sign-in: Google's page in a **Custom Tab**. The core listens on a loopback port for Google's
   redirect, then sends the tab to `ytlite://signed-in`, which brings the app back over it.
 - The refresh token is stored encrypted with an **Android Keystore** key (`KeystoreSecretStore`),
@@ -64,7 +66,7 @@ To try it without a car, Android Studio's SDK Manager has the **Android Auto Des
 emulator** (SDK Tools); it connects to a phone running Android Auto.
 
 `app/src/androidTest/.../AndroidAutoTest.kt` checks the service the way Android Auto uses it: the
-platform `MediaBrowser` sees the three tabs and search, and a browse item from Explore resolves and
+platform `MediaBrowser` sees the four tabs and search, and a browse item from Explore resolves and
 plays audio only (`./gradlew connectedDebugAndroidTest`, needs a device or emulator and network).
 
 ## Layout

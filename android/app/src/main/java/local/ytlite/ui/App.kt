@@ -9,12 +9,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Subscriptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,7 +48,7 @@ enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: Image
     ForYou("For you", Icons.Outlined.StarOutline, Icons.Filled.Star),
     Explore("Explore", Icons.Outlined.Explore, Icons.Filled.Explore),
     Search("Search", Icons.Outlined.Search, Icons.Filled.Search),
-    Settings("Settings", Icons.Outlined.Settings, Icons.Filled.Settings),
+    You("You", Icons.Outlined.AccountCircle, Icons.Filled.AccountCircle),
 }
 
 /** Tabs (a bottom bar on phones, a rail on tablets and in landscape), the
@@ -56,6 +56,12 @@ enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: Image
 @Composable
 fun App(model: AppModel) {
     var tab by rememberSaveable { mutableStateOf(Tab.Subscriptions) }
+    /** Settings, opened from You. */
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    fun openSettings() {
+        tab = Tab.You
+        settingsOpen = true
+    }
     val snackbar = remember { SnackbarHostState() }
     val nowPlaying by model.player.nowPlaying.collectAsStateWithLifecycle()
     val controller by model.player.controller.collectAsStateWithLifecycle()
@@ -94,11 +100,15 @@ fun App(model: AppModel) {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(1f)) {
                     when (tab) {
-                        Tab.Subscriptions -> FeedScreen(model, Feed.SUBSCRIPTIONS, "Subscriptions") { tab = Tab.Settings }
-                        Tab.ForYou -> FeedScreen(model, Feed.FOR_YOU, "For you") { tab = Tab.Settings }
+                        Tab.Subscriptions -> FeedScreen(model, Feed.SUBSCRIPTIONS, "Subscriptions", ::openSettings)
+                        Tab.ForYou -> FeedScreen(model, Feed.FOR_YOU, "For you", ::openSettings)
                         Tab.Explore -> ExploreScreen(model)
                         Tab.Search -> SearchScreen(model)
-                        Tab.Settings -> SettingsScreen(model)
+                        Tab.You -> if (settingsOpen) {
+                            SettingsScreen(model) { settingsOpen = false }
+                        } else {
+                            YouScreen(model, ::openSettings)
+                        }
                     }
                 }
                 nowPlaying?.takeIf { it.audioOnly }?.let { MiniPlayer(model, it) }

@@ -130,6 +130,28 @@ class AppModel(private val app: Application) {
         return videos.map { byId[it.id] ?: it }
     }
 
+    /** Videos played or marked watched, most recent first. */
+    suspend fun history(): List<Video> = core?.let { core -> io { core.history() } } ?: emptyList()
+
+    /** Also unmarks it watched and forgets its resume point. */
+    fun removeFromHistory(video: Video) {
+        val core = core ?: return
+        scope.launch {
+            runCatching { io { core.removeFromHistory(video.id) } }
+                .onFailure { _messages.tryEmit(describe(it)) }
+            _libraryVersion.update { it + 1 }
+        }
+    }
+
+    fun clearHistory() {
+        val core = core ?: return
+        scope.launch {
+            runCatching { io { core.clearHistory() } }
+                .onFailure { _messages.tryEmit(describe(it)) }
+            _libraryVersion.update { it + 1 }
+        }
+    }
+
     /** Also forgets the resume point. */
     fun setWatched(video: Video, watched: Boolean) {
         val core = core ?: return
@@ -166,10 +188,17 @@ class AppModel(private val app: Application) {
     fun resolveBlocking(videoId: String, audioOnly: Boolean, fromStart: Boolean = false): Playable {
         val core = core ?: throw FfiException.Failed(startupError ?: "the core didn't start")
         return core.play(videoId, settings.value.maxHeight.toUInt(), audioOnly, fromStart)
+            .also { playedNow() }
     }
 
     private suspend fun resolve(core: YtLite, id: String, audioOnly: Boolean, fromStart: Boolean) =
         io { core.play(id, settings.value.maxHeight.toUInt(), audioOnly, fromStart) }
+            .also { playedNow() }
+
+    /** The core marked a video played: History moves it to the top. */
+    private fun playedNow() {
+        _libraryVersion.update { it + 1 }
+    }
 
     /** Saves a resume point, or marks the video watched once it's finished.
      *  `refresh` reloads the lists so their progress bars catch up. */

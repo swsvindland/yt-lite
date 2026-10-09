@@ -190,62 +190,120 @@ struct SearchScreen: View {
     }
 }
 
+/// Pushed from You (the gear).
 struct SettingsScreen: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
-        NavigationStack {
-            Form {
-                Section {
-                    if model.signedIn {
-                        Label("Signed in", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                        Button("Sign out", role: .destructive) { model.signOut() }
-                    } else if model.hasGoogleClient {
-                        Button {
-                            model.signIn()
-                        } label: {
-                            Label(model.signingIn ? "Waiting for Google…" : "Sign in with Google", systemImage: "person.crop.circle")
-                        }
-                        .disabled(model.signingIn)
-                    } else {
-                        Text("No Google OAuth client was bundled. Run scripts/build-ios.sh on a Mac whose desktop config has one.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+        Form {
+            Section {
+                if model.signedIn {
+                    Label("Signed in", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Button("Sign out", role: .destructive) { model.signOut() }
+                } else if model.hasGoogleClient {
+                    Button {
+                        model.signIn()
+                    } label: {
+                        Label(model.signingIn ? "Waiting for Google…" : "Sign in with Google", systemImage: "person.crop.circle")
                     }
-                } header: {
-                    Text("YouTube account")
-                } footer: {
-                    if let problem = model.credentialProblem {
-                        Label("Keychain unavailable: \(problem)", systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                    }
+                    .disabled(model.signingIn)
+                } else {
+                    Text("No Google OAuth client was bundled. Run scripts/build-ios.sh on a Mac whose desktop config has one.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
-                Section {
-                    Picker("Maximum quality", selection: $model.maxHeight) {
-                        Text("720p").tag(720)
-                        Text("1080p").tag(1080)
-                        Text("1440p").tag(1440)
-                        Text("4K").tag(2160)
-                    }
-                    Toggle("Keep playing in background", isOn: $model.backgroundPlayback)
-                    Toggle("Audio only", isOn: $model.audioOnly)
-                } header: {
-                    Text("Playback")
-                } footer: {
-                    Text("Background: videos keep playing as audio when you lock the phone or switch apps, with controls on the Lock Screen. Audio only: plays just the sound (great for podcasts), using far less data and battery. Long-press any video to choose per video.")
-                }
-                Section("Feeds") {
-                    Toggle("Hide watched videos", isOn: $model.hideWatched)
-                }
-                Section {
-                    LabeledContent("Shorts", value: "Never shown")
-                    LabeledContent("Ads", value: "None")
-                } footer: {
-                    Text("yt-lite resolves streams natively and plays them with the system player.")
+            } header: {
+                Text("YouTube account")
+            } footer: {
+                if let problem = model.credentialProblem {
+                    Label("Keychain unavailable: \(problem)", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
                 }
             }
-            .navigationTitle("Settings")
+            Section {
+                Picker("Maximum quality", selection: $model.maxHeight) {
+                    Text("720p").tag(720)
+                    Text("1080p").tag(1080)
+                    Text("1440p").tag(1440)
+                    Text("4K").tag(2160)
+                }
+                Toggle("Keep playing in background", isOn: $model.backgroundPlayback)
+                Toggle("Audio only", isOn: $model.audioOnly)
+            } header: {
+                Text("Playback")
+            } footer: {
+                Text("Background: videos keep playing as audio when you lock the phone or switch apps, with controls on the Lock Screen. Audio only: plays just the sound (great for podcasts), using far less data and battery. Long-press any video to choose per video.")
+            }
+            Section("Feeds") {
+                Toggle("Hide watched videos", isOn: $model.hideWatched)
+            }
+            Section {
+                LabeledContent("Shorts", value: "Never shown")
+                LabeledContent("Ads", value: "None")
+            } footer: {
+                Text("yt-lite resolves streams natively and plays them with the system player.")
+            }
         }
+        .navigationTitle("Settings")
+    }
+}
+
+/// You: History (videos played or marked watched, most recent first), and
+/// the way to Settings.
+struct YouScreen: View {
+    @Environment(AppModel.self) private var model
+    @State private var videos: [Video] = []
+    @State private var loaded = false
+    @State private var confirmClear = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                HStack {
+                    Text("History").font(.title2.weight(.bold))
+                    Spacer()
+                    if !videos.isEmpty {
+                        Button("Clear", role: .destructive) { confirmClear = true }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+                if videos.isEmpty {
+                    if loaded {
+                        EmptyState(
+                            icon: "clock.arrow.circlepath",
+                            title: "No history yet",
+                            message: "Videos you play or mark as watched show up here, most recent first."
+                        )
+                    }
+                } else {
+                    VideoGrid(videos: videos, inHistory: true).padding(.top, 4)
+                }
+            }
+            .navigationTitle("You")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        SettingsScreen()
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                }
+            }
+            .confirmationDialog("Clear watch history?", isPresented: $confirmClear, titleVisibility: .visible) {
+                Button("Clear history", role: .destructive) { model.clearHistory() }
+            } message: {
+                Text("Every video leaves History, along with its resume point and watched mark. For you starts over too.")
+            }
+            .refreshable { await reload() }
+        }
+        .task { await reload() }
+        .onChange(of: model.watchedVersion) { Task { await reload() } }
+    }
+
+    private func reload() async {
+        if let fresh = try? await model.history() { videos = fresh }
+        loaded = true
     }
 }

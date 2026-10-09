@@ -2,6 +2,8 @@ package local.ytlite.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
@@ -17,11 +19,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -41,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,6 +82,7 @@ import uniffi.yt_lite_ffi.Video
 fun ScreenScaffold(
     title: String,
     large: Boolean = true,
+    navigationIcon: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable (Modifier) -> Unit,
 ) {
@@ -89,9 +98,19 @@ fun ScreenScaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
             if (large) {
-                LargeTopAppBar(title = { Text(title) }, actions = actions, scrollBehavior = scroll)
+                LargeTopAppBar(
+                    title = { Text(title) },
+                    navigationIcon = navigationIcon,
+                    actions = actions,
+                    scrollBehavior = scroll,
+                )
             } else {
-                TopAppBar(title = { Text(title) }, actions = actions, scrollBehavior = scroll)
+                TopAppBar(
+                    title = { Text(title) },
+                    navigationIcon = navigationIcon,
+                    actions = actions,
+                    scrollBehavior = scroll,
+                )
             }
         },
         // The navigation bar or rail handles the system insets below and beside.
@@ -351,6 +370,85 @@ fun SearchScreen(model: AppModel) {
                     )
                 }
             },
+        )
+    }
+}
+
+// You: History
+
+/** Videos played or marked watched, most recent first. */
+class HistoryViewModel(private val model: AppModel) : ViewModel() {
+    var videos by mutableStateOf(emptyList<Video>())
+        private set
+    var loaded by mutableStateOf(false)
+        private set
+
+    init {
+        // Again whenever something is played, removed or changes progress.
+        viewModelScope.launch {
+            model.libraryVersion.collect {
+                runCatching { model.history() }.onSuccess { videos = it }
+                loaded = true
+            }
+        }
+    }
+}
+
+/** History, and the way to Settings (the gear). */
+@Composable
+fun YouScreen(model: AppModel, onOpenSettings: () -> Unit) {
+    val vm = viewModel { HistoryViewModel(model) }
+    var confirmClear by remember { mutableStateOf(false) }
+    ScreenScaffold(
+        "You",
+        actions = {
+            IconButton(onClick = onOpenSettings) { Icon(Icons.Outlined.Settings, "Settings") }
+        },
+    ) { modifier ->
+        VideoGrid(
+            model,
+            vm.videos,
+            modifier = modifier,
+            inHistory = true,
+            header = {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("History", style = MaterialTheme.typography.titleLarge)
+                        Spacer(Modifier.weight(1f))
+                        if (vm.videos.isNotEmpty()) {
+                            TextButton(onClick = { confirmClear = true }) { Text("Clear") }
+                        }
+                    }
+                }
+            },
+            empty = {
+                if (vm.loaded) {
+                    EmptyState(
+                        Icons.Outlined.History,
+                        "No history yet",
+                        "Videos you play or mark as watched show up here, most recent first.",
+                    )
+                }
+            },
+        )
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear watch history?") },
+            text = {
+                Text(
+                    "Every video leaves History, along with its resume point and watched mark. " +
+                        "For you starts over too."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    model.clearHistory()
+                }) { Text("Clear history") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
         )
     }
 }

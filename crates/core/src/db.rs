@@ -34,6 +34,8 @@ pub struct VideoRow {
     pub watched: bool,
     /// Fraction played (0–1) if it was stopped partway, for a progress bar.
     pub progress: Option<f64>,
+    /// When it was last played or marked watched (unix seconds).
+    pub last_played: Option<i64>,
 }
 
 /// A video awaiting a Shorts verdict.
@@ -51,6 +53,26 @@ pub struct FeedQuery {
     pub max_age_days: u32,
     pub limit: u32,
     pub hide_watched: bool,
+}
+
+/// The `VideoRow` columns of `videos v`, in [`video_row`]'s order.
+const VIDEO_COLUMNS: &str = "v.id, v.title, v.channel_title, v.published, v.duration_secs, v.live,
+    v.watched_at IS NOT NULL,
+    CASE WHEN v.duration_secs > 0 THEN min(v.resume_secs / v.duration_secs, 1.0) END,
+    nullif(max(coalesce(v.played_at, 0), coalesce(v.watched_at, 0)), 0)";
+
+fn video_row(r: &rusqlite::Row) -> rusqlite::Result<VideoRow> {
+    Ok(VideoRow {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        channel_title: r.get(2)?,
+        published: r.get(3)?,
+        duration_secs: r.get(4)?,
+        live: r.get(5)?,
+        watched: r.get(6)?,
+        progress: r.get(7)?,
+        last_played: r.get(8)?,
+    })
 }
 
 const SCHEMA: &str = r#"
@@ -353,34 +375,57 @@ impl Db {
     pub fn feed(&self, q: FeedQuery) -> Result<Vec<VideoRow>> {
         let cutoff = Utc::now().timestamp() - i64::from(q.max_age_days) * 86_400;
         self.with(|c| {
-            let mut stmt = c.prepare(
-                "SELECT v.id, v.title, v.channel_title, v.published, v.duration_secs, v.live,
-                        v.watched_at IS NOT NULL,
-                        CASE WHEN v.duration_secs > 0
-                             THEN min(v.resume_secs / v.duration_secs, 1.0) END
+            let mut stmt = c.prepare(&format!(
+                "SELECT {VIDEO_COLUMNS}
                  FROM feed_items f JOIN videos v ON v.id = f.video_id
                  WHERE f.source = ?1 AND v.short = 0
                    AND (f.position IS NOT NULL OR v.published >= ?2)
                    AND (?3 = 0 OR v.watched_at IS NULL)
                  ORDER BY f.position ASC NULLS LAST, v.published DESC
-                 LIMIT ?4",
-            )?;
+                 LIMIT ?4"
+            ))?;
             stmt.query_map(
                 params![q.kind.as_str(), cutoff, q.hide_watched, q.limit],
-                |r| {
-                    Ok(VideoRow {
-                        id: r.get(0)?,
-                        title: r.get(1)?,
-                        channel_title: r.get(2)?,
-                        published: r.get(3)?,
-                        duration_secs: r.get(4)?,
-                        live: r.get(5)?,
-                        watched: r.get(6)?,
-                        progress: r.get(7)?,
-                    })
-                },
+                video_row,
             )?
             .collect()
+        })
+    }
+
+    /// Videos played or marked watched, most recent first.
+    pub fn history(&self, limit: u32) -> Result<Vec<VideoRow>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(&format!(
+                "SELECT {VIDEO_COLUMNS} FROM videos v
+                 WHERE v.played_at IS NOT NULL OR v.watched_at IS NOT NULL
+                 ORDER BY max(coalesce(v.played_at, 0), coalesce(v.watched_at, 0)) DESC
+                 LIMIT ?1"
+            ))?;
+            stmt.query_map([limit], video_row)?.collect()
+        })
+    }
+
+    /// Takes a video out of History: it's no longer played or watched, and
+    /// its resume point is gone.
+    pub fn remove_from_history(&self, id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE videos SET played_at=NULL, watched_at=NULL, resume_secs=NULL WHERE id=?1",
+                [id],
+            )
+            .map(drop)
+        })
+    }
+
+    /// Empties History (and with it watched marks and resume points).
+    pub fn clear_history(&self) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE videos SET played_at=NULL, watched_at=NULL, resume_secs=NULL
+                 WHERE played_at IS NOT NULL OR watched_at IS NOT NULL OR resume_secs IS NOT NULL",
+                [],
+            )
+            .map(drop)
         })
     }
 
@@ -774,6 +819,54 @@ mod tests {
             .unwrap();
         assert_eq!(played_at, Some(1_700_000_000));
         assert_eq!(db.resume_position("w").unwrap(), None);
+    }
+
+    #[test]
+    fn history_lists_played_and_watched_videos_newest_first() {
+        let db = progress_db();
+        let mut b = item("b", "UC1", LinkHint::WatchLink, 2);
+        b.duration = Some(DurationInfo {
+            secs: 300,
+            live_or_upcoming: false,
+        });
+        db.upsert_items(
+            FeedKind::Search,
+            &[b, item("c", "UC1", LinkHint::None, 3)],
+            &Retain::OnlyFetched,
+        )
+        .unwrap();
+        assert!(db.history(10).unwrap().is_empty());
+
+        db.mark_played("a").unwrap();
+        db.save_progress("a", 150.0, None).unwrap();
+        db.set_watched("b", true).unwrap();
+        // "b" was marked watched an hour after "a" was played.
+        db.with(|c| {
+            c.execute(
+                "UPDATE videos SET watched_at = (SELECT played_at FROM videos WHERE id='a') + 3600
+                 WHERE id='b'",
+                [],
+            )
+        })
+        .unwrap();
+        let history = db.history(10).unwrap();
+        let ids: Vec<_> = history.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, ["b", "a"]);
+        assert!(history[0].watched);
+        assert_eq!(history[1].progress, Some(0.25));
+        assert!(history[1].last_played.is_some());
+        assert!(history[0].last_played > history[1].last_played);
+        // Feeds report it too.
+        assert_eq!(row(&db, "a").last_played, history[1].last_played);
+
+        db.remove_from_history("b").unwrap();
+        assert_eq!(db.history(10).unwrap().len(), 1);
+        assert!(!db.played_ids().unwrap().contains("b"));
+
+        db.clear_history().unwrap();
+        assert!(db.history(10).unwrap().is_empty());
+        assert_eq!(db.resume_position("a").unwrap(), None);
+        assert!(!row(&db, "a").watched);
     }
 
     #[test]

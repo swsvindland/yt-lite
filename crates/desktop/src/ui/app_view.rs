@@ -6,6 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
 };
@@ -13,7 +14,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::feed_view::{FeedEvent, FeedView, SIDEBAR_W, Shared};
+use super::feed_view::{FeedEvent, FeedView, Listing, SIDEBAR_W, Shared};
 use super::settings_view::SettingsView;
 use super::status::MemoryIndicator;
 use super::thumb_store::ThumbStore;
@@ -36,6 +37,7 @@ enum Page {
     ForYou,
     Explore,
     Search,
+    History,
     Settings,
 }
 
@@ -45,6 +47,7 @@ pub struct AppView {
     for_you: Entity<FeedView>,
     explore: Entity<FeedView>,
     search: Entity<FeedView>,
+    history: Entity<FeedView>,
     settings: Entity<SettingsView>,
     memory: Entity<MemoryIndicator>,
     thumbs: Entity<ThumbStore>,
@@ -73,10 +76,23 @@ impl AppView {
             system_player: Rc::new(RefCell::new(SystemPlayer::default())),
             thumbs: thumbs.clone(),
         };
-        let subscriptions =
-            cx.new(|cx| FeedView::new(Arc::new(SubscriptionsSource), shared.clone(), window, cx));
-        let for_you =
-            cx.new(|cx| FeedView::new(Arc::new(ForYouSource), shared.clone(), window, cx));
+        let subscriptions = cx.new(|cx| {
+            FeedView::new(
+                Listing::Feed(Arc::new(SubscriptionsSource)),
+                shared.clone(),
+                window,
+                cx,
+            )
+        });
+        let for_you = cx.new(|cx| {
+            FeedView::new(
+                Listing::Feed(Arc::new(ForYouSource)),
+                shared.clone(),
+                window,
+                cx,
+            )
+        });
+        let history = cx.new(|cx| FeedView::new(Listing::History, shared.clone(), window, cx));
         let explore = cx.new(|cx| {
             FeedView::new_query(Arc::new(QuerySource::explore()), shared.clone(), window, cx)
         });
@@ -87,12 +103,17 @@ impl AppView {
         let memory = cx.new(MemoryIndicator::new);
 
         let mut subs = Vec::new();
-        for feed in [&subscriptions, &for_you, &explore, &search] {
+        for feed in [&subscriptions, &for_you, &explore, &search, &history] {
             subs.push(
                 cx.subscribe_in(feed, window, |this, _, event, window, cx| match event {
                     FeedEvent::OpenSettings => this.show(Page::Settings, window, cx),
                     FeedEvent::Played => {
                         this.for_you.update(cx, |v, _| v.stale = true);
+                        this.history.update(cx, |v, cx| v.reload(cx));
+                    }
+                    FeedEvent::HistoryChanged => {
+                        this.for_you.update(cx, |v, _| v.stale = true);
+                        this.reload_feeds(cx);
                     }
                 }),
             );
@@ -126,6 +147,7 @@ impl AppView {
             Ok("settings") => Page::Settings,
             Ok("explore") => Page::Explore,
             Ok("search") => Page::Search,
+            Ok("history") => Page::History,
             _ => Page::Subscriptions,
         };
         let mut this = Self {
@@ -134,6 +156,7 @@ impl AppView {
             for_you,
             explore,
             search,
+            history,
             settings,
             memory,
             thumbs,
@@ -215,6 +238,7 @@ impl AppView {
             &self.for_you,
             &self.explore,
             &self.search,
+            &self.history,
         ] {
             feed.update(cx, |v, cx| v.reload(cx));
         }
@@ -237,6 +261,7 @@ impl AppView {
             Page::ForYou => Some(self.for_you.clone()),
             Page::Explore => Some(self.explore.clone()),
             Page::Search => Some(self.search.clone()),
+            Page::History => Some(self.history.clone()),
             Page::Settings => None,
         }
     }
@@ -244,7 +269,7 @@ impl AppView {
     fn nav_item(
         &self,
         label: &'static str,
-        icon: IconName,
+        icon: impl Into<Icon>,
         page: Page,
         cx: &mut Context<Self>,
     ) -> SidebarMenuItem {
@@ -259,6 +284,7 @@ impl AppView {
         let nav_for_you = self.nav_item("For you", IconName::Star, Page::ForYou, cx);
         let nav_explore = self.nav_item("Explore", IconName::Globe, Page::Explore, cx);
         let nav_search = self.nav_item("Search", IconName::Search, Page::Search, cx);
+        let nav_history = self.nav_item("History", Lucide::Clock, Page::History, cx);
         let nav_settings = self.nav_item("Settings", IconName::Settings, Page::Settings, cx);
         let theme = cx.theme();
         let account = Account::get(cx);
@@ -318,6 +344,7 @@ impl AppView {
                         .child(nav_search),
                 ),
             )
+            .child(SidebarGroup::new("Library").child(SidebarMenu::new().child(nav_history)))
             .child(SidebarGroup::new("App").child(SidebarMenu::new().child(nav_settings)))
             .footer(
                 SidebarFooter::new().child(v_flex().gap_1().child(account_line).when(
@@ -350,6 +377,7 @@ impl Render for AppView {
             Page::ForYou => self.for_you.clone().into_any_element(),
             Page::Explore => self.explore.clone().into_any_element(),
             Page::Search => self.search.clone().into_any_element(),
+            Page::History => self.history.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
         };
         let theme = cx.theme();

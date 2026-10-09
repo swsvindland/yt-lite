@@ -59,6 +59,8 @@ impl From<anyhow::Error> for FfiError {
 
 type Result<T> = std::result::Result<T, FfiError>;
 
+const HISTORY_LIMIT: u32 = 500;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum Feed {
     Subscriptions,
@@ -90,6 +92,8 @@ pub struct Video {
     pub watched: bool,
     /// Fraction played (0–1) if it was stopped partway, for a progress bar.
     pub progress: Option<f64>,
+    /// When it was last played or marked watched (unix seconds).
+    pub last_played: Option<i64>,
 }
 
 impl From<VideoRow> for Video {
@@ -103,6 +107,7 @@ impl From<VideoRow> for Video {
             live: v.live,
             watched: v.watched,
             progress: v.progress,
+            last_played: v.last_played,
         }
     }
 }
@@ -253,6 +258,21 @@ impl YtLite {
         self.explore.set_query(query);
         self.refresh(Feed::Explore)?;
         self.videos(Feed::Explore, false)
+    }
+
+    /// Videos played or marked watched, most recent first.
+    pub fn history(&self) -> Result<Vec<Video>> {
+        let rows = self.services.db.history(HISTORY_LIMIT)?;
+        Ok(rows.into_iter().map(Video::from).collect())
+    }
+
+    /// Also unmarks it watched and forgets its resume point.
+    pub fn remove_from_history(&self, id: String) -> Result<()> {
+        Ok(self.services.db.remove_from_history(&id)?)
+    }
+
+    pub fn clear_history(&self) -> Result<()> {
+        Ok(self.services.db.clear_history()?)
     }
 
     /// Also forgets the resume point.

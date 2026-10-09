@@ -83,6 +83,29 @@ final class AppModel {
         return try await background { try core.videos(feed: feed, hideWatched: hide) }
     }
 
+    /// Videos played or marked watched, most recent first.
+    func history() async throws -> [Video] {
+        guard let core else { return [] }
+        return try await background { try core.history() }
+    }
+
+    /// Also unmarks it watched and forgets its resume point.
+    func removeFromHistory(_ video: Video) {
+        guard let core else { return }
+        Task {
+            try? await background { try core.removeFromHistory(id: video.id) }
+            watchedVersion += 1
+        }
+    }
+
+    func clearHistory() {
+        guard let core else { return }
+        Task {
+            try? await background { try core.clearHistory() }
+            watchedVersion += 1
+        }
+    }
+
     /// `videos` with their watched state and progress re-read from the
     /// cache, in the same order (Explore and Search keep their own lists).
     func refreshed(_ videos: [Video], from feed: Feed) async -> [Video] {
@@ -153,6 +176,8 @@ final class AppModel {
                 backgroundPlayback: backgroundPlayback
             )
         }
+        // The core marked it played: History moves it to the top.
+        watchedVersion += 1
     }
 
     /// Saves a resume point, or marks the video watched once it's finished.
@@ -228,9 +253,14 @@ extension Video {
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
-    var ageText: String {
+    var ageText: String { Self.relative(published) }
+
+    /// "watched 2 hours ago" (History).
+    var watchedText: String? { lastPlayed.map { "watched \(Self.relative($0))" } }
+
+    private static func relative(_ unix: Int64) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
-        return formatter.localizedString(for: Date(timeIntervalSince1970: TimeInterval(published)), relativeTo: .now)
+        return formatter.localizedString(for: Date(timeIntervalSince1970: TimeInterval(unix)), relativeTo: .now)
     }
 }

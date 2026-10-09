@@ -11,10 +11,10 @@ import uniffi.yt_lite_ffi.Feed
 import uniffi.yt_lite_ffi.Video
 
 /**
- * Android Auto's browse tree: Subscriptions, For you and Explore (topic →
- * videos), shown as tabs, plus search. Blocking (core calls); PlaybackService
- * runs it on background threads. `onChanged(parentId)` fires when a feed
- * finished refreshing in the background.
+ * Android Auto's browse tree: Subscriptions, For you, Explore (topic →
+ * videos) and History, shown as tabs, plus search. Blocking (core calls);
+ * PlaybackService runs it on background threads. `onChanged(parentId)` fires
+ * when a feed finished refreshing in the background.
  */
 class LibraryTree(private val model: AppModel, private val onChanged: (String) -> Unit) {
     /** Videos listed so far, to fill in what Android Auto asks to play. */
@@ -27,6 +27,7 @@ class LibraryTree(private val model: AppModel, private val onChanged: (String) -
         SUBSCRIPTIONS -> folder(SUBSCRIPTIONS, "Subscriptions")
         FOR_YOU -> folder(FOR_YOU, "For you")
         EXPLORE -> folder(EXPLORE, "Explore")
+        HISTORY -> folder(HISTORY, "History")
         else -> known[id]?.let(VideoItems::browsable)
     }
 
@@ -36,10 +37,12 @@ class LibraryTree(private val model: AppModel, private val onChanged: (String) -
             folder(SUBSCRIPTIONS, "Subscriptions"),
             folder(FOR_YOU, "For you"),
             folder(EXPLORE, "Explore"),
+            folder(HISTORY, "History"),
         )
         parentId == SUBSCRIPTIONS -> feed(Feed.SUBSCRIPTIONS, parentId)
         parentId == FOR_YOU -> feed(Feed.FOR_YOU, parentId)
         parentId == EXPLORE -> model.exploreTopics.mapIndexed { i, name -> folder("$TOPIC$i", name) }
+        parentId == HISTORY -> videos(model.core?.history().orEmpty())
         parentId.startsWith(TOPIC) -> parentId.removePrefix(TOPIC).toIntOrNull()
             ?.let { topic -> videos(model.core?.explore(topic.toUInt()).orEmpty()) }
         else -> null
@@ -69,6 +72,7 @@ class LibraryTree(private val model: AppModel, private val onChanged: (String) -
         const val SUBSCRIPTIONS = "subscriptions"
         const val FOR_YOU = "for_you"
         const val EXPLORE = "explore"
+        const val HISTORY = "history"
         private const val TOPIC = "topic:"
         private const val MAX_ITEMS = 100
 

@@ -1,4 +1,5 @@
-//! A video grid for one feed source (Subscriptions or For you).
+//! A video grid for one feed source (Subscriptions, For you, Explore,
+//! Search) or for History.
 //!
 //! Virtualized with GPUI's `uniform_list`: each list item is one row of cards.
 //! Card width adapts to the window (at least `MIN_CARD_W`, filling the row),
@@ -10,14 +11,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use futures::future::{Either, select};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::assets::IconName as Lucide;
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, WindowExt as _, h_flex,
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -38,6 +41,8 @@ pub const SIDEBAR_W: f32 = 232.;
 const MIN_CARD_W: f32 = 280.;
 const GAP: f32 = 20.;
 const PAD_X: f32 = 28.;
+/// History shows this many of the most recent videos.
+const HISTORY_LIMIT: u32 = 500;
 
 struct Card {
     id: SharedString,
@@ -49,6 +54,8 @@ struct Card {
     watched: bool,
     /// Fraction played if it was stopped partway.
     progress: Option<f32>,
+    /// When it was last played or marked watched (unix seconds).
+    last_played: Option<i64>,
 }
 
 impl From<VideoRow> for Card {
@@ -65,6 +72,7 @@ impl From<VideoRow> for Card {
             live: v.live,
             watched: v.watched,
             progress: v.progress.map(|p| p as f32),
+            last_played: v.last_played,
         }
     }
 }
@@ -73,6 +81,16 @@ pub enum FeedEvent {
     OpenSettings,
     /// A video started playing (For you uses this to know it's stale).
     Played,
+    /// History was edited (removed from, or cleared): watched marks and
+    /// progress changed everywhere.
+    HistoryChanged,
+}
+
+/// What a [`FeedView`] lists.
+pub enum Listing {
+    Feed(Arc<dyn FeedSource>),
+    /// Videos played or marked watched, most recent first (local only).
+    History,
 }
 
 impl EventEmitter<FeedEvent> for FeedView {}
@@ -86,7 +104,7 @@ pub struct Shared {
 }
 
 pub struct FeedView {
-    source: Arc<dyn FeedSource>,
+    listing: Listing,
     shared: Shared,
     cards: Rc<Vec<Card>>,
     status: SharedString,
@@ -113,7 +131,7 @@ impl FeedView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut this = Self::new(source.clone(), shared, window, cx);
+        let mut this = Self::new(Listing::Feed(source.clone()), shared, window, cx);
         if source.kind() == FeedKind::Search {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search YouTube"));
             this._subscriptions.push(cx.subscribe_in(
@@ -133,14 +151,15 @@ impl FeedView {
     }
 
     pub fn new(
-        source: Arc<dyn FeedSource>,
+        listing: Listing,
         shared: Shared,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let interval = AppServices::get(cx).config.feed.refresh_interval();
-        // Search results are only fetched on demand.
-        let timer = (source.kind() != FeedKind::Search).then(|| {
+        // Search results are only fetched on demand; History never is.
+        let fetched = matches!(&listing, Listing::Feed(s) if s.kind() != FeedKind::Search);
+        let timer = fetched.then(|| {
             cx.spawn_in(window, async move |this, cx| {
                 loop {
                     cx.background_executor().timer(interval).await;
@@ -160,7 +179,7 @@ impl FeedView {
             cx.observe_global::<AppConfig>(|v, cx| v.reload(cx)),
             cx.observe_global_in::<Account>(window, move |v, window, cx| {
                 let signed_in = Account::get(cx).signed_in;
-                if signed_in && !was_signed_in && v.source.kind() == FeedKind::Subscriptions {
+                if signed_in && !was_signed_in && v.kind() == Some(FeedKind::Subscriptions) {
                     v.refresh(window, cx);
                 }
                 was_signed_in = signed_in;
@@ -168,7 +187,7 @@ impl FeedView {
             }),
         ];
         let mut this = Self {
-            source,
+            listing,
             shared,
             cards: Rc::new(Vec::new()),
             status: "".into(),
@@ -188,14 +207,39 @@ impl FeedView {
         this
     }
 
+    /// The feed's kind; `None` for History.
+    fn kind(&self) -> Option<FeedKind> {
+        match &self.listing {
+            Listing::Feed(source) => Some(source.kind()),
+            Listing::History => None,
+        }
+    }
+
+    fn is_history(&self) -> bool {
+        matches!(self.listing, Listing::History)
+    }
+
+    fn title(&self) -> &'static str {
+        match &self.listing {
+            Listing::Feed(source) => source.display_name(),
+            Listing::History => "History",
+        }
+    }
+
     /// Shows the cached feed immediately, then refreshes if it's stale.
     fn startup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.source.kind() == FeedKind::Search {
-            self.loaded_once = true;
-            return;
-        }
+        let kind = match self.kind() {
+            Some(FeedKind::Search) => {
+                self.loaded_once = true;
+                return;
+            }
+            None => {
+                self.reload(cx);
+                return;
+            }
+            Some(kind) => kind,
+        };
         let services = AppServices::get(cx);
-        let kind = self.source.kind();
         cx.spawn_in(window, async move |this, cx| {
             let last = smol::unblock(move || {
                 services
@@ -249,7 +293,7 @@ impl FeedView {
     }
 
     fn is_stale(&self, cx: &App) -> bool {
-        if self.source.kind() == FeedKind::Search {
+        if matches!(self.kind(), Some(FeedKind::Search) | None) {
             return false;
         }
         let interval = AppConfig::get(cx).feed.refresh_interval().as_secs() as i64;
@@ -258,15 +302,17 @@ impl FeedView {
 
     /// Called when the tab is shown.
     pub fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_stale(cx) {
+        if self.is_history() {
+            self.reload(cx);
+        } else if self.is_stale(cx) {
             self.refresh(window, cx);
         }
     }
 
-    fn query(&self, cx: &App) -> FeedQuery {
+    fn query(&self, kind: FeedKind, cx: &App) -> FeedQuery {
         let f = &AppConfig::get(cx).feed;
         FeedQuery {
-            kind: self.source.kind(),
+            kind,
             max_age_days: f.max_age_days,
             limit: f.max_items,
             hide_watched: f.hide_watched,
@@ -276,9 +322,13 @@ impl FeedView {
     /// Re-reads the feed from SQLite (off the UI thread).
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let db = AppServices::get(cx).db.clone();
-        let q = self.query(cx);
+        let query = self.kind().map(|kind| self.query(kind, cx));
         cx.spawn(async move |this, cx| {
-            let rows = smol::unblock(move || db.feed(q)).await;
+            let rows = smol::unblock(move || match query {
+                Some(q) => db.feed(q),
+                None => db.history(HISTORY_LIMIT),
+            })
+            .await;
             this.update(cx, |v, cx| {
                 match rows {
                     Ok(rows) => {
@@ -295,6 +345,12 @@ impl FeedView {
     }
 
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Listing::Feed(source) = &self.listing else {
+            // History is local: nothing to fetch.
+            self.reload(cx);
+            return;
+        };
+        let source = source.clone();
         if self.refreshing {
             return;
         }
@@ -304,7 +360,6 @@ impl FeedView {
         cx.notify();
 
         let services = AppServices::get(cx);
-        let source = self.source.clone();
         let (tx, rx) = smol::channel::unbounded::<String>();
         cx.spawn_in(window, async move |this, cx| {
             let job = smol::unblock(move || {
@@ -367,7 +422,7 @@ impl FeedView {
     /// memory, to verify the memory budget with a full thumbnail cache.
     fn maybe_scroll_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.scroll_test_started
-            || self.source.kind() != FeedKind::Subscriptions
+            || self.kind() != Some(FeedKind::Subscriptions)
             || std::env::var_os("YT_LITE_SCROLL_TEST").is_none()
         {
             return;
@@ -530,6 +585,61 @@ impl FeedView {
             .into_any_element()
     }
 
+    /// Asks first: it can't be undone.
+    fn confirm_clear_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let view = view.clone();
+            alert
+                .title("Clear watch history?")
+                .description(
+                    "Every video leaves History, along with its resume point and watched mark. \
+                     For you starts over too.",
+                )
+                .ok_text("Clear history")
+                .ok_variant(ButtonVariant::Danger)
+                .show_cancel(true)
+                .on_ok(move |_, _, cx| {
+                    view.update(cx, |v, cx| v.clear_history(cx)).ok();
+                    true
+                })
+        });
+    }
+
+    fn clear_history(&mut self, cx: &mut Context<Self>) {
+        self.cards = Rc::new(Vec::new());
+        let db = AppServices::get(cx).db.clone();
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = smol::unblock(move || db.clear_history()).await {
+                log::error!("clear_history: {e:#}");
+            }
+            this.update(cx, |_, cx| cx.emit(FeedEvent::HistoryChanged))
+                .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn remove_from_history(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(cards) = Rc::get_mut(&mut self.cards) else {
+            return;
+        };
+        if ix >= cards.len() {
+            return;
+        }
+        let id = cards.remove(ix).id.to_string();
+        let db = AppServices::get(cx).db.clone();
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = smol::unblock(move || db.remove_from_history(&id)).await {
+                log::error!("remove_from_history: {e:#}");
+            }
+            this.update(cx, |_, cx| cx.emit(FeedEvent::HistoryChanged))
+                .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn render_card(
         &mut self,
         ix: usize,
@@ -615,6 +725,24 @@ impl FeedView {
                 cx.stop_propagation();
                 this.set_watched(ix, !watched, cx)
             }));
+        // History: remove instead of watched/unwatched.
+        let trailing = if self.is_history() {
+            Button::new("remove")
+                .ghost()
+                .xsmall()
+                .icon(IconName::Close)
+                .tooltip("Remove from history")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.remove_from_history(ix, cx)
+                }))
+        } else {
+            eye
+        };
+        let meta = match card.last_played.filter(|_| self.is_history()) {
+            Some(at) => format!("{} · watched {}", card.channel, format_age(at, now)),
+            None => format!("{} · {}", card.channel, format_age(card.published, now)),
+        };
         let restart = card.progress.is_some().then(|| {
             Button::new("restart")
                 .ghost()
@@ -660,15 +788,11 @@ impl FeedView {
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
                                     .truncate()
-                                    .child(format!(
-                                        "{} · {}",
-                                        card.channel,
-                                        format_age(card.published, now)
-                                    )),
+                                    .child(meta),
                             ),
                     )
                     .children(restart)
-                    .child(eye),
+                    .child(trailing),
             )
             .into_any_element()
     }
@@ -702,6 +826,16 @@ impl FeedView {
                 )
                 .into_any_element();
         }
+        if self.is_history() {
+            return Button::new("clear-history")
+                .outline()
+                .small()
+                .icon(Lucide::Trash)
+                .label("Clear history")
+                .disabled(self.cards.is_empty())
+                .on_click(cx.listener(|this, _, window, cx| this.confirm_clear_history(window, cx)))
+                .into_any_element();
+        }
         let hide_watched = AppConfig::get(cx).feed.hide_watched;
         h_flex()
             .gap_4()
@@ -730,7 +864,7 @@ impl FeedView {
 
     /// Explore: one chip per topic.
     fn render_topics(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.source.kind() != FeedKind::Explore {
+        if self.kind() != Some(FeedKind::Explore) {
             return None;
         }
         let chips = EXPLORE_TOPICS
@@ -766,7 +900,7 @@ impl FeedView {
         let theme = cx.theme();
         let subtitle: SharedString = if !self.status.is_empty() {
             self.status.clone()
-        } else if self.source.kind() == FeedKind::Search && self.cards.is_empty() {
+        } else if self.kind() == Some(FeedKind::Search) && self.cards.is_empty() {
             "Results never include Shorts.".into()
         } else {
             format!("{} videos", self.cards.len()).into()
@@ -790,7 +924,7 @@ impl FeedView {
                                 div()
                                     .text_2xl()
                                     .font_weight(FontWeight::BOLD)
-                                    .child(self.source.display_name()),
+                                    .child(self.title()),
                             )
                             .child(
                                 h_flex()
@@ -810,17 +944,24 @@ impl FeedView {
     fn render_empty(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let account = Account::get(cx);
-        let (icon, title, body, action): (IconName, &str, &str, Option<AnyElement>) = if !self
+        let (icon, title, body, action): (Icon, &str, &str, Option<AnyElement>) = if !self
             .loaded_once
             || (self.refreshing && self.cards.is_empty())
         {
             (
-                IconName::LoaderCircle,
+                Icon::new(IconName::LoaderCircle),
                 "Loading…",
                 "Fetching the latest videos.",
                 None,
             )
-        } else if self.source.kind() == FeedKind::Subscriptions
+        } else if self.is_history() {
+            (
+                Icon::new(Lucide::Clock),
+                "No history yet",
+                "Videos you play or mark as watched show up here, most recent first.",
+                None,
+            )
+        } else if self.kind() == Some(FeedKind::Subscriptions)
             && !account.signed_in
             && AppConfig::get(cx).feed.extra_channels.is_empty()
         {
@@ -840,7 +981,7 @@ impl FeedView {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(FeedEvent::OpenSettings)))
             };
             (
-                IconName::CircleUser,
+                Icon::new(IconName::CircleUser),
                 "Connect your YouTube account",
                 if has_client {
                     "Sign in to load the channels you subscribe to. Only read access is requested."
@@ -849,23 +990,23 @@ impl FeedView {
                 },
                 Some(button.into_any_element()),
             )
-        } else if self.source.kind() == FeedKind::Search {
+        } else if self.kind() == Some(FeedKind::Search) {
             (
-                IconName::Search,
+                Icon::new(IconName::Search),
                 "Search YouTube",
                 "Type a query and press Enter. Works without signing in.",
                 None,
             )
-        } else if self.source.kind() == FeedKind::Home {
+        } else if self.kind() == Some(FeedKind::Home) {
             (
-                IconName::Star,
+                Icon::new(IconName::Star),
                 "Nothing here yet",
                 "Watch a few videos and yt-lite will recommend more like them.",
                 None,
             )
         } else {
             (
-                IconName::Inbox,
+                Icon::new(IconName::Inbox),
                 "No videos yet",
                 "New uploads from your subscriptions show up here.",
                 None,
@@ -885,7 +1026,7 @@ impl FeedView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(Icon::new(icon).size_6().text_color(theme.muted_foreground)),
+                    .child(icon.size_6().text_color(theme.muted_foreground)),
             )
             .child(
                 div()

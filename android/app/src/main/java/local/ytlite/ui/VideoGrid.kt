@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.RemoveCircleOutline
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SmartDisplay
@@ -57,15 +58,18 @@ import local.ytlite.core.ageText
 import local.ytlite.core.durationText
 import local.ytlite.core.thumbnailUrl
 import local.ytlite.core.watchUrl
+import local.ytlite.core.watchedText
 import uniffi.yt_lite_ffi.Video
 
 /** Adaptive grid of video cards: one column on phones, more on tablets.
- *  `header` goes full width above the cards; `empty` shows when there are none. */
+ *  `header` goes full width above the cards; `empty` shows when there are none.
+ *  `inHistory`: cards say when they were watched and can be removed. */
 @Composable
 fun VideoGrid(
     model: AppModel,
     videos: List<Video>,
     modifier: Modifier = Modifier,
+    inHistory: Boolean = false,
     header: LazyGridScope.() -> Unit = {},
     empty: (@Composable () -> Unit)? = null,
 ) {
@@ -80,13 +84,13 @@ fun VideoGrid(
         if (videos.isEmpty() && empty != null) {
             item(span = { GridItemSpan(maxLineSpan) }) { empty() }
         }
-        items(videos, key = { it.id }) { VideoCard(model, it) }
+        items(videos, key = { it.id }) { VideoCard(model, it, inHistory) }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun VideoCard(model: AppModel, video: Video) {
+fun VideoCard(model: AppModel, video: Video, inHistory: Boolean = false) {
     var menu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     Box {
@@ -141,7 +145,7 @@ fun VideoCard(model: AppModel, video: Video) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "${video.channel} · ${video.ageText}",
+                "${video.channel} · ${(if (inHistory) video.watchedText else null) ?: video.ageText}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -163,6 +167,12 @@ fun VideoCard(model: AppModel, video: Video) {
                 menu = false
                 val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, video.watchUrl)
                 context.startActivity(Intent.createChooser(send, null))
+            }
+            if (inHistory) {
+                MenuItem("Remove from history", Icons.Outlined.RemoveCircleOutline) {
+                    menu = false
+                    model.removeFromHistory(video)
+                }
             }
         }
     }

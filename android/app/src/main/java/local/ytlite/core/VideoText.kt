@@ -18,19 +18,23 @@ val Video.durationText: String?
     }
 
 /** "3 days ago", "2 weeks ago" (localized). */
-val Video.ageText: String
-    get() {
-        val secs = (System.currentTimeMillis() / 1000 - published).coerceAtLeast(0).toDouble()
-        val (amount, unit) = when {
-            secs < 3600 -> secs / 60 to RelativeUnit.MINUTES
-            secs < 86_400 -> secs / 3600 to RelativeUnit.HOURS
-            secs < 7 * 86_400 -> secs / 86_400 to RelativeUnit.DAYS
-            secs < 30 * 86_400 -> secs / (7 * 86_400) to RelativeUnit.WEEKS
-            secs < 365 * 86_400 -> secs / (30 * 86_400) to RelativeUnit.MONTHS
-            else -> secs / (365 * 86_400) to RelativeUnit.YEARS
-        }
-        return RelativeDateTimeFormatter.getInstance().format(maxOf(1, amount.toInt()).toDouble(), Direction.LAST, unit)
+val Video.ageText: String get() = relativeTime(published)
+
+/** "watched 2 hours ago" (History). */
+val Video.watchedText: String? get() = lastPlayed?.let { "watched ${relativeTime(it)}" }
+
+private fun relativeTime(unix: Long): String {
+    val secs = (System.currentTimeMillis() / 1000 - unix).coerceAtLeast(0).toDouble()
+    val (amount, unit) = when {
+        secs < 3600 -> secs / 60 to RelativeUnit.MINUTES
+        secs < 86_400 -> secs / 3600 to RelativeUnit.HOURS
+        secs < 7 * 86_400 -> secs / 86_400 to RelativeUnit.DAYS
+        secs < 30 * 86_400 -> secs / (7 * 86_400) to RelativeUnit.WEEKS
+        secs < 365 * 86_400 -> secs / (30 * 86_400) to RelativeUnit.MONTHS
+        else -> secs / (365 * 86_400) to RelativeUnit.YEARS
     }
+    return RelativeDateTimeFormatter.getInstance().format(maxOf(1, amount.toInt()).toDouble(), Direction.LAST, unit)
+}
 
 fun clock(secs: Long): String {
     val s = secs.coerceAtLeast(0)

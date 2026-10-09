@@ -1,6 +1,7 @@
 package local.ytlite.ui
 
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DirectionsCar
@@ -16,6 +18,7 @@ import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
@@ -36,17 +39,24 @@ import local.ytlite.core.Settings
 
 private val qualities = listOf(720 to "720p", 1080 to "1080p", 1440 to "1440p", 2160 to "4K")
 
+/** Opened from You (the gear); back returns there. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(model: AppModel) {
+fun SettingsScreen(model: AppModel, onBack: () -> Unit) {
     val settings by model.settings.collectAsStateWithLifecycle()
     val signedIn by model.signedIn.collectAsStateWithLifecycle()
     val signingIn by model.signingIn.collectAsStateWithLifecycle()
     val credentialProblem by model.credentialProblem.collectAsStateWithLifecycle()
     val context = LocalContext.current
     fun update(change: (Settings) -> Settings) = model.updateSettings(change)
+    BackHandler(onBack = onBack)
 
-    ScreenScaffold("Settings") { modifier ->
+    ScreenScaffold(
+        "Settings",
+        navigationIcon = {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
+        },
+    ) { modifier ->
         LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
             item { Section("YouTube account") }
             item {

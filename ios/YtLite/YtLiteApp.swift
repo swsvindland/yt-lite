@@ -34,8 +34,8 @@ struct RootView: View {
                 .tabItem { Label("Explore", systemImage: "globe") }
             SearchScreen()
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }
-            SettingsScreen()
-                .tabItem { Label("Settings", systemImage: "gearshape") }
+            YouScreen()
+                .tabItem { Label("You", systemImage: "person.crop.circle") }
         }
         .alert(
             "Something went wrong",

@@ -28,9 +28,12 @@ a loopback port the Rust core listens on, so there's nothing new to set up in Go
 
 ## What's in it
 
-- Tabs: **Subscriptions** (sign in), **For you**, **Explore** (topic chips), **Search**, **Settings**
-  (account, max quality, hide watched).
-- Pull to refresh; long-press a video to mark it watched/unwatched, start it over, or share it.
+- Tabs: **Subscriptions** (sign in), **For you**, **Explore** (topic chips), **Search**, **You**:
+  your **History** (everything played or marked watched, most recent first, with progress;
+  remove videos or clear it) and, behind the gear, **Settings** (account, max quality, hide
+  watched).
+- Pull to refresh; long-press a video to mark it watched/unwatched, start it over, share it, or
+  (in History) remove it.
 - **Progress:** videos resume where you stopped them, and count as watched only once they've
   played to the end (within the last 5%, 10 s to 1 min). A red bar on the thumbnail shows how far
   you got. `PlaybackProgress.swift` saves the position on pause, stop and backgrounding, and every
@@ -48,7 +51,8 @@ a loopback port the Rust core listens on, so there's nothing new to set up in Go
   10 MB to ~32 KB/s, and AVPlayer fetches a progressive file in one request, so anything longer
   than ~10 minutes never started (verified 2026-10-09). HLS segments are a few seconds each. If a
   master has no audio rendition, the master itself is played as audio, never as video.
-- **CarPlay** (`CarPlay.swift`): tabs for Subscriptions, For you and Explore (topic → videos).
+- **CarPlay** (`CarPlay.swift`): tabs for Subscriptions, For you, Explore (topic → videos) and
+  History (pick up where you left off).
   Choosing a video plays it audio only and opens the system Now Playing screen (the same
   `NowPlaying` metadata and ±15 s controls). See [CarPlay](#carplay) for the entitlement.
 - Thumbnails load straight from `i.ytimg.com` via `AsyncImage`/`URLCache`.

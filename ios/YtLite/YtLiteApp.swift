@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct YtLiteApp: App {
-    @State private var model = AppModel()
+    @State private var model = AppModel.shared
 
     init() {
         // Keep audio playing in the background and allow Picture in Picture.
@@ -22,6 +22,7 @@ struct YtLiteApp: App {
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TabView {
@@ -54,6 +55,9 @@ struct RootView: View {
                     .padding(20)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.checkSignIn() } }
         }
     }
 }

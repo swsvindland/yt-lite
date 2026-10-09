@@ -1,7 +1,9 @@
 # iPhone app (SwiftUI on `yt-lite-core`)
 
 Status: **built and running in the simulator** (2026-10-08). Explore, Search and playback were
-checked there end to end. Sign-in and running on a real device haven't been tried yet.
+checked there end to end. Sign-in and running on a real device haven't been tried yet. Audio only
+was reworked to use HLS (2026-10-09; a 3.8-hour video plays and seeks). CarPlay builds and is
+wired up, but hasn't been tried on a CarPlay screen yet.
 
 ## Run it on your iPhone
 
@@ -35,11 +37,16 @@ a loopback port the Rust core listens on, so there's nothing new to set up in Go
   apps, video keeps playing as audio. It uses `audiovisualBackgroundPlaybackPolicy` and detaches
   the player from its view in the background. Lock Screen / Control Center show title, channel
   and artwork, with play/pause, ±15 s and scrubbing (`NowPlaying.swift`).
-- **Audio only** (Settings default, or long-press a video → *Listen*): plays just the AAC audio
-  stream (`audio/mp4`, since AVPlayer can't decode Opus/WebM), about 130 kbps instead of several
-  Mbps, with no video decoding. It plays in a mini player above the tab bar with the same
-  lock-screen controls. AVPlayer misreports these files' duration (about 2×), so the listing's
-  duration is used.
+- **Audio only** (Settings default, or long-press a video → *Listen*): plays the HLS master's
+  audio-only rendition (AAC, about 130 kbps instead of several Mbps), with no video decoding. It
+  plays in a mini player above the tab bar with the same lock-screen controls. It doesn't use the
+  single AAC file from `adaptiveFormats`. googlevideo throttles requests for more than about
+  10 MB to ~32 KB/s, and AVPlayer fetches a progressive file in one request, so anything longer
+  than ~10 minutes never started (verified 2026-10-09). HLS segments are a few seconds each. If a
+  master has no audio rendition, the master itself is played as audio, never as video.
+- **CarPlay** (`CarPlay.swift`): tabs for Subscriptions, For you and Explore (topic → videos).
+  Choosing a video plays it audio only and opens the system Now Playing screen (the same
+  `NowPlaying` metadata and ±15 s controls). See [CarPlay](#carplay) for the entitlement.
 - Thumbnails load straight from `i.ytimg.com` via `AsyncImage`/`URLCache`.
 - Data lives in the app container (`Application Support/yt-lite`), and the refresh token in the
   iOS Keychain.
@@ -53,8 +60,27 @@ scripts/build-ios.sh        cargo (aarch64-apple-ios, aarch64-apple-ios-sim) -> 
                             uniffi-bindgen -> Swift, Secrets.swift
 ios/YtLite.xcodeproj        app target; YtLite/ is a synchronized folder (new files are picked up)
 ios/YtLite/*.swift          SwiftUI app
-ios/Info.plist              background audio (other keys are generated from build settings)
+ios/Info.plist              background audio, scene manifest with the CarPlay scene (other keys
+                            are generated from build settings)
+ios/CarPlay.entitlements    com.apple.developer.carplay-audio (see Config.xcconfig)
 ```
+
+## CarPlay
+
+CarPlay only lists apps that have the `com.apple.developer.carplay-audio` entitlement.
+
+- **Simulator:** always included. Run the app, then attach a CarPlay display to the simulator
+  (Simulator.app: I/O → External Displays → CarPlay).
+- **Your iPhone:** the provisioning profile has to include the entitlement, and Apple grants it
+  only on request: <https://developer.apple.com/carplay> (needs the paid developer program; a
+  free Personal Team can't get it). Once your team has it, put `YTLITE_CARPLAY = YES` in
+  `ios/Local.xcconfig`. Until then, device builds leave it out so signing keeps working. CarPlay
+  then still shows yt-lite's audio on its Now Playing screen with play/pause/skip, but not the
+  app's own lists.
+
+With the phone locked, the Keychain can't be read, so Subscriptions refreshes from the cached
+channel list (RSS needs no sign-in) and the subscription list itself updates the next time the
+phone is unlocked.
 
 ## Design notes
 

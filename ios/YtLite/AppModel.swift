@@ -10,10 +10,12 @@ struct PlayItem: Identifiable {
 }
 
 /// Owns the Rust core (`YtLite`). Every core call is blocking, so it runs on
-/// a background task via `background { }`.
+/// a background task via `background { }`. Shared by the phone UI and CarPlay.
 @Observable
 @MainActor
 final class AppModel {
+    static let shared = AppModel()
+
     private(set) var core: YtLite?
     var signedIn = false
     var signingIn = false
@@ -57,13 +59,18 @@ final class AppModel {
                 clientSecret: Secrets.googleClientSecret
             )
             self.core = core
-            Task {
-                self.signedIn = (try? await background { core.isSignedIn() }) ?? false
-                self.credentialProblem = try? await background { core.credentialStoreProblem() }
-            }
+            Task { await checkSignIn() }
         } catch {
             errorMessage = "Couldn't start: \(describe(error))"
         }
+    }
+
+    /// Also run when the app becomes active: if CarPlay launched it while the
+    /// phone was locked, the Keychain couldn't be read then.
+    func checkSignIn() async {
+        guard let core, !signingIn else { return }
+        signedIn = (try? await background { core.isSignedIn() }) ?? false
+        credentialProblem = try? await background { core.credentialStoreProblem() }
     }
 
     var hasGoogleClient: Bool { core?.hasGoogleClient() ?? false }
@@ -101,32 +108,38 @@ final class AppModel {
 
     /// `audioOnly: nil` uses the Settings default.
     func play(_ video: Video, audioOnly: Bool? = nil) {
-        guard let core, !resolving else { return }
-        resolving = true
-        let maxHeight = maxHeight
         let wantAudio = audioOnly ?? self.audioOnly
         Task {
-            defer { resolving = false }
             do {
-                let playable = try await background {
-                    try core.play(id: video.id, maxHeight: UInt32(maxHeight), audioOnly: wantAudio)
-                }
-                guard let url = URL(string: playable.url) else { return }
-                if playable.audioOnly {
-                    PlayerPresenter.shared.stop()
-                    AudioPlayer.shared.play(url: url, video: video)
-                } else {
-                    AudioPlayer.shared.stop()
-                    PlayerPresenter.shared.present(
-                        PlayItem(id: video.id, url: url, video: video, maxHeight: maxHeight),
-                        backgroundPlayback: backgroundPlayback
-                    )
-                }
-                setWatched(video, true)
+                try await start(video, audioOnly: wantAudio)
             } catch {
                 errorMessage = describe(error)
             }
         }
+    }
+
+    /// Resolves and starts playback. Throws rather than showing the alert,
+    /// so CarPlay can show its own.
+    func start(_ video: Video, audioOnly: Bool) async throws {
+        guard let core, !resolving else { return }
+        resolving = true
+        defer { resolving = false }
+        let maxHeight = maxHeight
+        let playable = try await background {
+            try core.play(id: video.id, maxHeight: UInt32(maxHeight), audioOnly: audioOnly)
+        }
+        guard let url = URL(string: playable.url) else { return }
+        if playable.audioOnly {
+            PlayerPresenter.shared.stop()
+            AudioPlayer.shared.play(url: url, video: video)
+        } else {
+            AudioPlayer.shared.stop()
+            PlayerPresenter.shared.present(
+                PlayItem(id: video.id, url: url, video: video, maxHeight: maxHeight),
+                backgroundPlayback: backgroundPlayback
+            )
+        }
+        setWatched(video, true)
     }
 
     func signIn() {

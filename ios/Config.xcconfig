@@ -9,4 +9,20 @@
 // Setting the team in Xcode's Signing tab also works, but writes it into the
 // (committed) project file instead.
 
+// CarPlay needs the com.apple.developer.carplay-audio entitlement. The Simulator
+// takes it as is. On a device, the provisioning profile must include it, and Apple
+// only grants it on request (developer.apple.com/carplay, paid membership). Once
+// your team has it, add this to Local.xcconfig:
+//
+//     YTLITE_CARPLAY = YES
+//
+// Without it, device builds leave the entitlement out and CarPlay shows only the
+// Now Playing controls.
+YTLITE_CARPLAY = NO
+YTLITE_ENTITLEMENTS_YES = CarPlay.entitlements
+YTLITE_ENTITLEMENTS_NO =
+CODE_SIGN_ENTITLEMENTS = $(YTLITE_ENTITLEMENTS_$(YTLITE_CARPLAY))
+CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*] = CarPlay.entitlements
+
+// Last, so it can override the defaults above.
 #include? "Local.xcconfig"

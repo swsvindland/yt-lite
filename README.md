@@ -26,7 +26,7 @@ never loads YouTube's web player or a web view.
 - Low memory: virtualized grid, byte-capped thumbnail cache, idle trimming, and a live RSS readout
 
 Primary target is Windows 11; macOS is supported too (menu bar, ⌘ shortcuts, `.app` bundle).
-There's also a SwiftUI **iPhone app** on the same Rust core: `scripts/build-ios.sh`, then open
+There's also a SwiftUI **iPhone app** (with CarPlay) on the same Rust core: `scripts/build-ios.sh`, then open
 `ios/YtLite.xcodeproj`. See [docs/ios.md](docs/ios.md).
 
 ---

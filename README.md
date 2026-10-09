@@ -245,7 +245,9 @@ A port of the part of yt-dlp's YouTube extractor that matters here (yt-dlp is pu
    (signature/`n` deciphering) nor a PO token. `android_vr` started getting 403s in 2026-08.
 2. `visitorData` (a logged-out session id) is required; without it YouTube answers
    `LOGIN_REQUIRED` "confirm you're not a bot". That response carries a fresh one, so the
-   resolver retries once with it and caches it in SQLite.
+   resolver retries once with it and caches it in SQLite. YouTube flags sessions after a
+   while; when the cached one gets `LOGIN_REQUIRED`, the resolver starts a new session the
+   same way. If a brand-new session is rejected too, YouTube is blocking the IP address.
 3. Format selection: highest quality tier ≤ `max_height` (from YouTube's `qualityLabel`, so
    2:1 and vertical videos are handled), then fps, then `codecs` order; audio is the
    original-language track (auto-dubbed videos list several), non-DRC, best bitrate. Formats

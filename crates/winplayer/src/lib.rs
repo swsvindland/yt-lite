@@ -151,6 +151,9 @@ fn create(title: &str, aspect: Option<f64>) -> Result<State> {
             lpfnWndProc: Some(wndproc),
             hInstance: hinstance.into(),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            // The app icon, if the exe has one (resource 1, like GPUI's windows).
+            hIcon: LoadIconW(Some(hinstance.into()), windows::core::PCWSTR(1 as _))
+                .unwrap_or_default(),
             hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
             lpszClassName: CLASS_NAME,
             ..Default::default()

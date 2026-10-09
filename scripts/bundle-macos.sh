@@ -11,6 +11,7 @@ APP=target/release/yt-lite.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/yt-lite "$APP/Contents/MacOS/yt-lite"
+cp crates/desktop/resources/macos/AppIcon.icns "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -21,6 +22,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>yt-lite</string>
   <key>CFBundleIdentifier</key><string>local.yt-lite</string>
   <key>CFBundleExecutable</key><string>yt-lite</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>

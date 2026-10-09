@@ -1,0 +1,48 @@
+#EXTM3U
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/233/lang/ja/playlist/index.m3u8",TYPE=AUDIO,GROUP-ID="233",LANGUAGE="ja",NAME="日本語 - dubbed",YT-EXT-XTAGS="Cg8KBWFjb250EgZkdWJiZWQKCgoEbGFuZxICamE",YT-EXT-AUDIO-CONTENT-ID="ja.3",YT-EXT-ABSOLUTE-LOUDNESS=-22.720,DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/233/lang/pt/playlist/index.m3u8",TYPE=AUDIO,GROUP-ID="233",LANGUAGE="pt",NAME="Português - dubbed",YT-EXT-XTAGS="Cg8KBWFjb250EgZkdWJiZWQKCgoEbGFuZxICcHQ",YT-EXT-AUDIO-CONTENT-ID="pt.3",YT-EXT-ABSOLUTE-LOUDNESS=-22.650,DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/233/lang/en/playlist/index.m3u8",TYPE=AUDIO,GROUP-ID="233",LANGUAGE="en",NAME="English - original",YT-EXT-XTAGS="ChEKBWFjb250EghvcmlnaW5hbAoKCgRsYW5nEgJlbg",YT-EXT-AUDIO-CONTENT-ID="en.4",YT-EXT-ABSOLUTE-LOUDNESS=-18.070,DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/234/lang/ja/playlist/index.m3u8",TYPE=AUDIO,GROUP-ID="234",LANGUAGE="ja",NAME="日本語 - dubbed",YT-EXT-XTAGS="Cg8KBWFjb250EgZkdWJiZWQKCgoEbGFuZxICamE",YT-EXT-AUDIO-CONTENT-ID="ja.3",YT-EXT-ABSOLUTE-LOUDNESS=-22.720,DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/234/lang/pt/playlist/index.m3u8",TYPE=AUDIO,GROUP-ID="234",LANGUAGE="pt",NAME="Português - dubbed",YT-EXT-XTAGS="Cg8KBWFjb250EgZkdWJiZWQKCgoEbGFuZxICcHQ",YT-EXT-AUDIO-CONTENT-ID="pt.3",YT-EXT-ABSOLUTE-LOUDNESS=-22.650,DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/234/lang/en/playlist/index.m3u8",TYPE=AUDIO,GROUP-ID="234",LANGUAGE="en",NAME="English - original",YT-EXT-XTAGS="ChEKBWFjb250EghvcmlnaW5hbAoKCgRsYW5nEgJlbg",YT-EXT-AUDIO-CONTENT-ID="en.4",YT-EXT-ABSOLUTE-LOUDNESS=-18.070,DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_timedtext_playlist/id/redacted/lang/en/playlist/index.m3u8",TYPE=SUBTITLES,GROUP-ID="vtt",LANGUAGE="en",NAME="English",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_timedtext_playlist/id/redacted/lang/ja/playlist/index.m3u8",TYPE=SUBTITLES,GROUP-ID="vtt",LANGUAGE="ja",NAME="日本語",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_timedtext_playlist/id/redacted/lang/pt/playlist/index.m3u8",TYPE=SUBTITLES,GROUP-ID="vtt",LANGUAGE="pt",NAME="Português",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_timedtext_playlist/id/redacted/lang/ru/playlist/index.m3u8",TYPE=SUBTITLES,GROUP-ID="vtt",LANGUAGE="ru",NAME="Русский",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_timedtext_playlist/id/redacted/lang/tr/playlist/index.m3u8",TYPE=SUBTITLES,GROUP-ID="vtt",LANGUAGE="tr",NAME="Türkçe",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-MEDIA:URI="https://manifest.googlevideo.com/api/manifest/hls_timedtext_playlist/id/redacted/lang/vi/playlist/index.m3u8",TYPE=SUBTITLES,GROUP-ID="vtt",LANGUAGE="vi",NAME="Tiếng Việt",DEFAULT=NO,AUTOSELECT=YES
+#EXT-X-STREAM-INF:BANDWIDTH=294327,CODECS="avc1.4D400D,mp4a.40.5",RESOLUTION=426x214,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="233",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/229/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=378831,CODECS="avc1.4D400D,mp4a.40.2",RESOLUTION=426x214,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/229/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=577783,CODECS="avc1.4D401E,mp4a.40.2",RESOLUTION=640x320,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/230/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1021110,CODECS="avc1.4D401F,mp4a.40.2",RESOLUTION=854x428,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/231/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1705860,CODECS="avc1.64001F,mp4a.40.2",RESOLUTION=1280x640,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/232/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=164976,CODECS="avc1.4D400C,mp4a.40.5",RESOLUTION=256x128,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="233",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/269/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=2657078,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x960,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/270/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=100107,CODECS="vp09.00.10.08,mp4a.40.5",RESOLUTION=256x128,FRAME-RATE=15,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="233",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/602/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=232265,CODECS="vp09.00.11.08,mp4a.40.5",RESOLUTION=256x128,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="233",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/603/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=265784,CODECS="vp09.00.20.08,mp4a.40.5",RESOLUTION=426x214,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="233",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/604/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=350288,CODECS="vp09.00.20.08,mp4a.40.2",RESOLUTION=426x214,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/604/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=481235,CODECS="vp09.00.21.08,mp4a.40.2",RESOLUTION=640x320,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/605/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=703909,CODECS="vp09.00.30.08,mp4a.40.2",RESOLUTION=854x428,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/606/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1214052,CODECS="vp09.00.31.08,mp4a.40.2",RESOLUTION=1280x640,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/609/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=2477350,CODECS="vp09.00.40.08,mp4a.40.2",RESOLUTION=1920x960,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/614/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=8147342,CODECS="vp09.00.50.08,mp4a.40.2",RESOLUTION=2560x1280,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/620/playlist/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=23696266,CODECS="vp09.00.50.08,mp4a.40.2",RESOLUTION=3840x1920,FRAME-RATE=30,VIDEO-RANGE=SDR,YT-EXT-ABSOLUTE-LOUDNESS=-18.070,AUDIO="234",SUBTITLES="vtt",CLOSED-CAPTIONS=NONE
+https://manifest.googlevideo.com/api/manifest/hls_playlist/id/redacted/itag/625/playlist/index.m3u8

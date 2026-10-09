@@ -8,6 +8,7 @@
 //! YouTube changes this regularly. When it breaks, front-ends fall back to
 //! yt-dlp (desktop) and the fix is usually a constant in `innertube.rs`.
 
+pub mod hls;
 pub mod innertube;
 pub mod select;
 

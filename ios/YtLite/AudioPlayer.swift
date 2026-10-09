@@ -2,8 +2,9 @@ import AVFoundation
 import Observation
 import SwiftUI
 
-/// Audio-only playback (podcast mode): just the AAC stream, no video
-/// decoding, keeps playing with the screen off. Shown as a mini player.
+/// Audio-only playback (podcast mode): the HLS audio-only rendition, no
+/// video decoding, keeps playing with the screen off. Shown as a mini player
+/// on the phone and as Now Playing in CarPlay.
 @Observable
 @MainActor
 final class AudioPlayer {
@@ -20,7 +21,11 @@ final class AudioPlayer {
 
     func play(url: URL, video: Video) {
         stop()
-        let player = AVPlayer(url: url)
+        let item = AVPlayerItem(url: url)
+        // Only matters if the core had to return the master playlist (no
+        // audio-only rendition): take its smallest variant.
+        item.preferredPeakBitRate = 1
+        let player = AVPlayer(playerItem: item)
         player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         self.player = player
         current = video
@@ -31,10 +36,7 @@ final class AudioPlayer {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.elapsed = time.seconds
-                // AVPlayer misreads the length of YouTube's DASH audio files
-                // (about 2x); trust the listing's duration when we have it.
-                if (self.current?.durationSecs ?? 0) == 0,
-                   let d = self.player?.currentItem?.duration.seconds, d.isFinite, d > 0 {
+                if let d = self.player?.currentItem?.duration.seconds, d.isFinite, d > 0 {
                     self.duration = d
                 }
             }
@@ -97,7 +99,7 @@ struct MiniPlayer: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(video.title).font(.footnote.weight(.semibold)).lineLimit(1)
-                        Text("\(clock(audio.elapsed)) / \(clock(audio.duration)) · \(video.channel)")
+                        Text(video.live ? "LIVE · \(video.channel)" : "\(clock(audio.elapsed)) / \(clock(audio.duration)) · \(video.channel)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -117,7 +119,7 @@ struct MiniPlayer: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
 
-                ProgressView(value: audio.duration > 0 ? min(audio.elapsed / audio.duration, 1) : 0)
+                ProgressView(value: !video.live && audio.duration > 0 ? min(audio.elapsed / audio.duration, 1) : 0)
                     .progressViewStyle(.linear)
                     .tint(.red)
             }

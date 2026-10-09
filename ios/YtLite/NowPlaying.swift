@@ -2,16 +2,14 @@ import AVFoundation
 import MediaPlayer
 import UIKit
 
-/// Lock-screen / Control Center controls and metadata for whichever AVPlayer
-/// is active (video or audio only).
+/// Lock-screen / Control Center / CarPlay Now Playing controls and metadata
+/// for whichever AVPlayer is active (video or audio only).
 @MainActor
 final class NowPlaying {
     static let shared = NowPlaying()
 
     private weak var player: AVPlayer?
     private var info: [String: Any] = [:]
-    /// From the listing; AVPlayer misreads YouTube DASH audio durations.
-    private var knownDuration = false
     private var timeObserver: Any?
     private var commandsInstalled = false
 
@@ -23,8 +21,9 @@ final class NowPlaying {
             MPMediaItemPropertyTitle: video.title,
             MPMediaItemPropertyArtist: video.channel,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
+            MPNowPlayingInfoPropertyIsLiveStream: video.live,
         ]
-        knownDuration = (video.durationSecs ?? 0) > 0
+        // From the listing until AVPlayer has loaded the playlist.
         if let secs = video.durationSecs, secs > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = Double(secs)
         }
@@ -49,7 +48,7 @@ final class NowPlaying {
         guard let player else { return }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime().seconds
         info[MPNowPlayingInfoPropertyPlaybackRate] = Double(player.rate)
-        if !knownDuration, let duration = player.currentItem?.duration.seconds, duration.isFinite, duration > 0 {
+        if let duration = player.currentItem?.duration.seconds, duration.isFinite, duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info

@@ -14,7 +14,7 @@ use yt_lite_core::feed::subscriptions::SubscriptionsSource;
 use yt_lite_core::feed::{FeedKind, FeedSource};
 use yt_lite_core::net::Http;
 use yt_lite_core::resolve::innertube::InnertubeResolver;
-use yt_lite_core::resolve::{Prefs, StreamResolver};
+use yt_lite_core::resolve::{Prefs, StreamResolver, hls};
 
 uniffi::setup_scaffolding!();
 
@@ -96,7 +96,8 @@ impl From<VideoRow> for Video {
 
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Playable {
-    /// HLS master playlist (video), or an AAC audio stream (audio only).
+    /// HLS: the master playlist (video), or its audio-only rendition (audio
+    /// only; the master itself if it has none).
     pub url: String,
     pub title: String,
     pub is_live: bool,
@@ -237,26 +238,31 @@ impl YtLite {
     }
 
     /// Resolves streams natively (no yt-dlp on iOS). Video: the HLS master
-    /// playlist. `audio_only`: the AAC audio stream, which AVPlayer plays
-    /// in the background with no video decoding (podcasts). Live streams are
-    /// always HLS.
+    /// playlist. `audio_only`: the master's audio-only rendition, which
+    /// AVPlayer plays with no video decoding (podcasts), or the master itself
+    /// if that can't be found, so audio-only never falls back to video.
     pub fn play(&self, id: String, max_height: u32, audio_only: bool) -> Result<Playable> {
         let prefs = Prefs {
             max_tier: max_height,
-            // AVPlayer can't decode Opus/WebM.
-            audio_mime: Some("audio/mp4".into()),
             ..Prefs::default()
         };
         let r = self.resolver.resolve(&id, &prefs)?;
-        let audio_url = r.audio.as_ref().map(|a| a.url.clone()).filter(|_| audio_only && !r.is_live);
-        let (url, audio_only) = match (audio_url, r.hls.clone()) {
-            (Some(audio), _) => (audio, true),
-            (None, Some(hls)) => (hls, false),
-            (None, None) => {
-                return Err(FfiError::Failed {
-                    message: "YouTube returned no playable stream for this video".into(),
-                });
+        let Some(master) = r.hls else {
+            return Err(FfiError::Failed {
+                message: "YouTube returned no playable stream for this video".into(),
+            });
+        };
+        let url = if audio_only {
+            match hls::fetch_audio_rendition(&self.services.http, &master) {
+                Ok(Some(audio)) => audio,
+                Ok(None) => master,
+                Err(e) => {
+                    log::warn!("audio rendition for {id}: {e:#}");
+                    master
+                }
             }
+        } else {
+            master
         };
         Ok(Playable {
             url,

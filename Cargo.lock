@@ -9469,6 +9469,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "embed-resource",
  "env_logger",
  "futures",
  "gpui-kit",
@@ -9519,6 +9520,7 @@ name = "yt-lite-ffi"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "keyring-core",
  "log",
  "uniffi",
  "yt-lite-core",

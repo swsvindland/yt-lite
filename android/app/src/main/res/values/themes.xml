@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose draws everything; these only cover the window before it does. -->
+    <style name="Theme.YtLite" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Android 12+ splash: the launcher glyph on a red circle. -->
+    <style name="Theme.YtLite.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/brand_red</item>
+        <item name="postSplashScreenTheme">@style/Theme.YtLite</item>
+    </style>
+</resources>

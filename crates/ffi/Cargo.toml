@@ -1,6 +1,6 @@
 [package]
 name = "yt-lite-ffi"
-description = "Swift (UniFFI) bindings over yt-lite-core for the iOS app"
+description = "Swift and Kotlin (UniFFI) bindings over yt-lite-core for the iOS and Android apps"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,8 @@ publish.workspace = true
 
 [lib]
 name = "yt_lite_ffi"
-# staticlib for the iOS xcframework; cdylib so uniffi-bindgen can read metadata on the host.
+# staticlib for the iOS xcframework; cdylib for Android (and so uniffi-bindgen
+# can read metadata on the host).
 crate-type = ["staticlib", "cdylib", "lib"]
 
 [[bin]]
@@ -20,3 +21,5 @@ yt-lite-core = { workspace = true, default-features = false }
 anyhow.workspace = true
 log.workspace = true
 uniffi = { version = "0.32", features = ["cli"] }
+# The Android app's secret store plugs into keyring-core (see secret_store.rs).
+keyring-core = "1"

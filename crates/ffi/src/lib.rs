@@ -1,5 +1,5 @@
-//! Swift-facing API for the iOS app. Every method is blocking (network or
-//! SQLite); Swift calls them from background tasks.
+//! Swift/Kotlin-facing API for the iOS and Android apps. Every method is
+//! blocking (network or SQLite); the apps call them from background threads.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,24 +16,34 @@ use yt_lite_core::net::Http;
 use yt_lite_core::resolve::innertube::InnertubeResolver;
 use yt_lite_core::resolve::{Prefs, StreamResolver, hls};
 
+mod secret_store;
+
 uniffi::setup_scaffolding!();
 
 #[derive(Debug, uniffi::Error)]
 pub enum FfiError {
     NotSignedIn,
-    Failed { message: String },
+    // Not `message`: it would clash with Kotlin's Throwable.message.
+    Failed { reason: String },
 }
 
 impl std::fmt::Display for FfiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FfiError::NotSignedIn => f.write_str("Not signed in"),
-            FfiError::Failed { message } => f.write_str(message),
+            FfiError::Failed { reason } => f.write_str(reason),
         }
     }
 }
 
 impl std::error::Error for FfiError {}
+
+/// An exception thrown by app code called from Rust (a [`SecretStore`]).
+impl From<uniffi::UnexpectedUniFFICallbackError> for FfiError {
+    fn from(e: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        FfiError::Failed { reason: e.reason }
+    }
+}
 
 impl From<anyhow::Error> for FfiError {
     fn from(e: anyhow::Error) -> Self {
@@ -41,7 +51,7 @@ impl From<anyhow::Error> for FfiError {
             FfiError::NotSignedIn
         } else {
             FfiError::Failed {
-                message: format!("{e:#}"),
+                reason: format!("{e:#}"),
             }
         }
     }
@@ -179,9 +189,16 @@ impl YtLite {
         self.services.config.has_google_client()
     }
 
-    pub fn start_sign_in(&self) -> Result<Arc<SignIn>> {
+    /// `return_url`: where to send the browser after Google redirects back
+    /// (Android: an app link that brings the app back over the browser tab).
+    #[uniffi::method(default(return_url = None))]
+    pub fn start_sign_in(&self, return_url: Option<String>) -> Result<Arc<SignIn>> {
         Ok(Arc::new(SignIn {
-            inner: self.services.auth.start_loopback_sign_in()?,
+            inner: self
+                .services
+                .auth
+                .start_loopback_sign_in()?
+                .returning_to(return_url),
         }))
     }
 
@@ -276,7 +293,7 @@ impl YtLite {
         let r = self.resolver.resolve(&id, &prefs)?;
         let Some(master) = r.hls else {
             return Err(FfiError::Failed {
-                message: "YouTube returned no playable stream for this video".into(),
+                reason: "YouTube returned no playable stream for this video".into(),
             });
         };
         let url = if audio_only {

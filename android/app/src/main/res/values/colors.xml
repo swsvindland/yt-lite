@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The brand red of the desktop logo and the other apps' icons. -->
+    <color name="brand_red">#FFFF0033</color>
+    <color name="splash_background">#FF0F0F0F</color>
+</resources>

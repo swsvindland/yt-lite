@@ -1,7 +1,8 @@
 //! Google OAuth for installed apps: loopback redirect + PKCE.
 //!
 //! The refresh token is stored in the OS credential store (Windows Credential
-//! Manager / macOS Keychain) via `keyring`; access tokens live only in memory.
+//! Manager / macOS Keychain / iOS Keychain; on Android a store the app
+//! registers) via `keyring`; access tokens live only in memory.
 //! The consent page opens in the user's default browser; the app never embeds
 //! a web view.
 
@@ -234,13 +235,19 @@ impl Auth {
             listener,
             request,
             cancelled: std::sync::atomic::AtomicBool::new(false),
+            return_to: None,
         })
     }
 
     /// Waits (up to 5 minutes, or until cancelled) for the redirect, then
     /// exchanges the code and stores the refresh token.
     pub fn finish_loopback_sign_in(&self, pending: &LoopbackSignIn) -> Result<()> {
-        let code = loopback::wait_for_code(&pending.listener, &pending.request.state, &pending.cancelled)?;
+        let code = loopback::wait_for_code(
+            &pending.listener,
+            &pending.request.state,
+            &pending.cancelled,
+            pending.return_to.as_deref(),
+        )?;
         self.complete_sign_in(&pending.request, &code)
     }
 
@@ -259,9 +266,18 @@ pub struct LoopbackSignIn {
     listener: std::net::TcpListener,
     request: AuthRequest,
     cancelled: std::sync::atomic::AtomicBool,
+    return_to: Option<String>,
 }
 
 impl LoopbackSignIn {
+    /// After Google redirects back, send the browser on to `url` (e.g. an
+    /// app link that brings the app back over the browser tab) instead of
+    /// showing a "you can close this tab" page.
+    pub fn returning_to(mut self, url: Option<String>) -> Self {
+        self.return_to = url;
+        self
+    }
+
     /// The Google consent page to show.
     pub fn url(&self) -> &str {
         &self.request.url
@@ -275,12 +291,23 @@ impl LoopbackSignIn {
 
 /// Desktop: keyring's all-in-one API picks the platform store (macOS
 /// Keychain, Windows Credential Manager, Secret Service).
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 type CredentialEntry = keyring::Entry;
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn open_entry(service: &str, user: &str) -> keyring::Result<CredentialEntry> {
     keyring::Entry::new(service, user)
+}
+
+/// Android: the app registers keyring-core's default store at startup
+/// (values encrypted with an Android Keystore key; see the FFI crate's
+/// `set_secret_store`).
+#[cfg(target_os = "android")]
+type CredentialEntry = keyring_core::Entry;
+
+#[cfg(target_os = "android")]
+fn open_entry(service: &str, user: &str) -> keyring::Result<CredentialEntry> {
+    keyring_core::Entry::new(service, user)
 }
 
 /// iOS: keyring's all-in-one API has no iOS store, so register the
@@ -330,6 +357,7 @@ mod loopback {
         listener: &TcpListener,
         expected_state: &str,
         cancelled: &AtomicBool,
+        return_to: Option<&str>,
     ) -> Result<String> {
         listener.set_nonblocking(true)?;
         let deadline = Instant::now() + SIGN_IN_TIMEOUT;
@@ -340,7 +368,7 @@ mod loopback {
             match listener.accept() {
                 Ok((stream, _)) => {
                     stream.set_nonblocking(false)?;
-                    if let Some(result) = handle_redirect(stream, expected_state)? {
+                    if let Some(result) = handle_redirect(stream, expected_state, return_to)? {
                         return result;
                     }
                 }
@@ -359,6 +387,7 @@ mod loopback {
     fn handle_redirect(
         mut stream: TcpStream,
         expected_state: &str,
+        return_to: Option<&str>,
     ) -> Result<Option<Result<String>>> {
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         let mut line = String::new();
@@ -384,6 +413,14 @@ mod loopback {
             (Some(code), None) => Ok(code),
             (None, None) => unreachable!(),
         };
+        if let Some(url) = return_to {
+            // The app shows the outcome either way.
+            let _ = write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: {url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            return Ok(Some(result));
+        }
         let body = if result.is_ok() {
             "Signed in to yt-lite. You can close this tab."
         } else {
@@ -395,5 +432,47 @@ mod loopback {
             body.len()
         );
         Ok(Some(result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::AtomicBool;
+
+    use super::loopback;
+
+    /// Sends Google's redirect to a loopback listener; returns the code it
+    /// got and the HTTP response the browser saw.
+    fn redirect(query: &str, return_to: Option<&'static str>) -> (Option<String>, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let waiter = std::thread::spawn(move || {
+            loopback::wait_for_code(&listener, "S", &AtomicBool::new(false), return_to).ok()
+        });
+        let mut browser = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(browser, "GET /?{query} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").unwrap();
+        let mut response = String::new();
+        browser.read_to_string(&mut response).unwrap();
+        (waiter.join().unwrap(), response)
+    }
+
+    #[test]
+    fn loopback_shows_a_page_or_sends_the_browser_back_to_the_app() {
+        let (code, page) = redirect("code=C&state=S", None);
+        assert_eq!(code.as_deref(), Some("C"));
+        assert!(page.starts_with("HTTP/1.1 200"), "{page}");
+        assert!(page.contains("You can close this tab"));
+
+        let (code, page) = redirect("code=C&state=S", Some("ytlite://signed-in"));
+        assert_eq!(code.as_deref(), Some("C"));
+        assert!(page.starts_with("HTTP/1.1 302"), "{page}");
+        assert!(page.contains("Location: ytlite://signed-in\r\n"));
+
+        // Failures go back to the app too, which shows the error.
+        let (code, page) = redirect("error=access_denied&state=S", Some("ytlite://signed-in"));
+        assert_eq!(code, None);
+        assert!(page.contains("Location: ytlite://signed-in\r\n"));
     }
 }

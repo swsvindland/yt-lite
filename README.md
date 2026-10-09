@@ -28,8 +28,12 @@ never loads YouTube's web player or a web view.
 - Low memory: virtualized grid, byte-capped thumbnail cache, idle trimming, and a live RSS readout
 
 Primary target is Windows 11; macOS is supported too (menu bar, ⌘ shortcuts, `.app` bundle).
-There's also a SwiftUI **iPhone app** (with CarPlay) on the same Rust core: `scripts/build-ios.sh`, then open
-`ios/YtLite.xcodeproj`. See [docs/ios.md](docs/ios.md).
+There are phone apps on the same Rust core too:
+
+- **iPhone** (SwiftUI, with CarPlay): `scripts/build-ios.sh`, then open `ios/YtLite.xcodeproj`.
+  See [docs/ios.md](docs/ios.md).
+- **Android** (Jetpack Compose, Media3, with Android Auto): `scripts/build-android.sh`, then open
+  `android/` in Android Studio. See [docs/android.md](docs/android.md).
 
 ---
 
@@ -406,10 +410,12 @@ crates/desktop/      yt-lite: GPUI app
   src/ui/              app shell + sidebar, feed grid, settings, shared thumbnail store
 crates/winplayer/     Windows MediaPlayer window (pure-Rust bindings; type-checks from any host
                      with `cargo check -p yt-lite-winplayer --target x86_64-pc-windows-msvc`)
-crates/ffi/          UniFFI bindings for the iPhone app
+crates/ffi/          UniFFI bindings (Swift and Kotlin) for the phone apps
 ios/                 SwiftUI iPhone app (see docs/ios.md)
-scripts/bundle-macos.sh, scripts/build-ios.sh
-docs/ios.md          plan for a SwiftUI iPhone app on the same core
+android/             Jetpack Compose Android app (see docs/android.md)
+scripts/bundle-macos.sh, scripts/build-ios.sh, scripts/build-android.sh
+scripts/make-icons.swift   the app icon for iOS, macOS and Windows (Android's is a vector)
+docs/ios.md, docs/android.md
 ```
 
 ### Phase 2 (designed for, not built)

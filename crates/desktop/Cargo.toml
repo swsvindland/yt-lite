@@ -14,6 +14,7 @@ path = "src/main.rs"
 yt-lite-core.workspace = true
 anyhow.workspace = true
 log.workspace = true
+serde_json.workspace = true
 chrono.workspace = true
 
 # UI: gpui-kit pins a matching GPUI snapshot (gpui-pre) and re-exports gpui + gpui-component.
@@ -35,9 +36,10 @@ memory-stats = "1.2"
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
-objc2-av-foundation = "0.3"
+objc2-av-foundation = { version = "0.3", features = ["objc2-core-media"] }
 objc2-av-kit = "0.3"
 objc2-core-foundation = "0.3"
+objc2-core-media = "0.3"
 
 # Windows playback: WinRT MediaPlayer via Windows.UI.Composition.
 [target.'cfg(windows)'.dependencies]

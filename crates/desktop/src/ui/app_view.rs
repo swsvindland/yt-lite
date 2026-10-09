@@ -1,8 +1,10 @@
 //! Window root: sidebar navigation plus the active page.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
@@ -23,6 +25,10 @@ use crate::player::Player;
 use crate::system_player::SystemPlayer;
 use crate::thumbs::Thumbnails;
 use crate::{FocusSearch, OpenConfigFolder, Refresh, ToggleHideWatched};
+use yt_lite_core::progress::Progress;
+
+/// How often playback positions are collected from the players and saved.
+const SAVE_PROGRESS_EVERY: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -44,6 +50,7 @@ pub struct AppView {
     thumbs: Entity<ThumbStore>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
+    _save_progress: Task<()>,
 }
 
 impl AppView {
@@ -73,6 +80,7 @@ impl AppView {
         let explore = cx.new(|cx| {
             FeedView::new_query(Arc::new(QuerySource::explore()), shared.clone(), window, cx)
         });
+        let save_progress = Self::save_progress(&shared, cx);
         let search =
             cx.new(|cx| FeedView::new_query(Arc::new(QuerySource::search()), shared, window, cx));
         let settings = cx.new(|_| SettingsView);
@@ -83,7 +91,7 @@ impl AppView {
             subs.push(
                 cx.subscribe_in(feed, window, |this, _, event, window, cx| match event {
                     FeedEvent::OpenSettings => this.show(Page::Settings, window, cx),
-                    FeedEvent::Watched => {
+                    FeedEvent::Played => {
                         this.for_you.update(cx, |v, _| v.stale = true);
                     }
                 }),
@@ -131,6 +139,7 @@ impl AppView {
             thumbs,
             focus,
             _subscriptions: subs,
+            _save_progress: save_progress,
         };
         // `YT_LITE_SEARCH=<query>`: open Search with this query (testing aid).
         if let Some(q) = std::env::var("YT_LITE_SEARCH").ok().filter(|s| !s.is_empty()) {
@@ -143,10 +152,72 @@ impl AppView {
             .filter(|s| !s.is_empty())
         {
             this.subscriptions.update(cx, |v, cx| {
-                v.play_video(id.into(), "Autoplay".into(), window, cx)
+                v.play_video(id.into(), "Autoplay".into(), false, window, cx)
             });
         }
         this
+    }
+
+    /// Saves where the players got to every few seconds: resume points, and
+    /// watched once a video has played to the end. Feeds reload when a video
+    /// is closed or finished, so their progress bars catch up.
+    fn save_progress(shared: &Shared, cx: &mut Context<Self>) -> Task<()> {
+        let system_player = shared.system_player.clone();
+        let player = shared.player.clone();
+        let db = AppServices::get(cx).db.clone();
+        cx.spawn(async move |this, cx| {
+            // Last saved position per video, to skip ones that haven't moved.
+            let mut saved: HashMap<String, f64> = HashMap::new();
+            loop {
+                cx.background_executor().timer(SAVE_PROGRESS_EVERY).await;
+                let mut positions = system_player.borrow_mut().poll();
+                positions.extend(player.take_positions());
+                positions.retain(|p| {
+                    p.done
+                        || saved
+                            .get(&p.video_id)
+                            .is_none_or(|s| (s - p.secs).abs() >= 1.0)
+                });
+                if positions.is_empty() {
+                    continue;
+                }
+                for p in &positions {
+                    if p.done {
+                        saved.remove(&p.video_id);
+                    } else {
+                        saved.insert(p.video_id.clone(), p.secs);
+                    }
+                }
+                let db = db.clone();
+                let changed = smol::unblock(move || {
+                    let mut changed = false;
+                    for p in positions {
+                        match db.save_progress(&p.video_id, p.secs, p.duration) {
+                            Ok(progress) => {
+                                changed |= p.done || progress == Some(Progress::Finished)
+                            }
+                            Err(e) => log::error!("saving progress of {}: {e:#}", p.video_id),
+                        }
+                    }
+                    changed
+                })
+                .await;
+                if changed && this.update(cx, |this, cx| this.reload_feeds(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    fn reload_feeds(&mut self, cx: &mut Context<Self>) {
+        for feed in [
+            &self.subscriptions,
+            &self.for_you,
+            &self.explore,
+            &self.search,
+        ] {
+            feed.update(cx, |v, cx| v.reload(cx));
+        }
     }
 
     fn show(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {

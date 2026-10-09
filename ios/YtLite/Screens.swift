@@ -124,6 +124,9 @@ struct ExploreScreen: View {
             .refreshable { await load() }
         }
         .task { if videos.isEmpty { await load() } }
+        .onChange(of: model.watchedVersion) {
+            Task { videos = await model.refreshed(videos, from: .explore) }
+        }
     }
 
     private func load() async {
@@ -166,6 +169,9 @@ struct SearchScreen: View {
             .navigationTitle("Search")
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search YouTube")
             .onSubmit(of: .search) { Task { await run() } }
+        }
+        .onChange(of: model.watchedVersion) {
+            Task { videos = await model.refreshed(videos, from: .search) }
         }
     }
 

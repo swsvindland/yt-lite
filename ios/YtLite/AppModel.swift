@@ -7,6 +7,8 @@ struct PlayItem: Identifiable {
     let url: URL
     let video: Video
     let maxHeight: Int
+    /// Resume point (seconds), or 0.
+    let start: Double
 }
 
 /// Owns the Rust core (`YtLite`). Every core call is blocking, so it runs on
@@ -21,7 +23,7 @@ final class AppModel {
     var signingIn = false
     var resolving = false
     var errorMessage: String?
-    /// Bumped when watched state changes so screens can reload.
+    /// Bumped when watched state or progress changes so screens can reload.
     var watchedVersion = 0
     /// Set if the iOS Keychain can't store the sign-in token.
     var credentialProblem: String?
@@ -81,6 +83,16 @@ final class AppModel {
         return try await background { try core.videos(feed: feed, hideWatched: hide) }
     }
 
+    /// `videos` with their watched state and progress re-read from the
+    /// cache, in the same order (Explore and Search keep their own lists).
+    func refreshed(_ videos: [Video], from feed: Feed) async -> [Video] {
+        guard let core, !videos.isEmpty,
+              let fresh = try? await background({ try core.videos(feed: feed, hideWatched: false) })
+        else { return videos }
+        let byId = Dictionary(fresh.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return videos.map { byId[$0.id] ?? $0 }
+    }
+
     func refresh(_ feed: Feed) async throws {
         guard let core else { return }
         _ = try await background { try core.refresh(feed: feed) }
@@ -106,12 +118,13 @@ final class AppModel {
         }
     }
 
-    /// `audioOnly: nil` uses the Settings default.
-    func play(_ video: Video, audioOnly: Bool? = nil) {
+    /// `audioOnly: nil` uses the Settings default. Resumes where the video
+    /// was stopped unless `fromStart`.
+    func play(_ video: Video, audioOnly: Bool? = nil, fromStart: Bool = false) {
         let wantAudio = audioOnly ?? self.audioOnly
         Task {
             do {
-                try await start(video, audioOnly: wantAudio)
+                try await start(video, audioOnly: wantAudio, fromStart: fromStart)
             } catch {
                 errorMessage = describe(error)
             }
@@ -119,27 +132,39 @@ final class AppModel {
     }
 
     /// Resolves and starts playback. Throws rather than showing the alert,
-    /// so CarPlay can show its own.
-    func start(_ video: Video, audioOnly: Bool) async throws {
+    /// so CarPlay can show its own. The video counts as watched once it has
+    /// played to the end (`PlaybackProgress`).
+    func start(_ video: Video, audioOnly: Bool, fromStart: Bool = false) async throws {
         guard let core, !resolving else { return }
         resolving = true
         defer { resolving = false }
         let maxHeight = maxHeight
         let playable = try await background {
-            try core.play(id: video.id, maxHeight: UInt32(maxHeight), audioOnly: audioOnly)
+            try core.play(id: video.id, maxHeight: UInt32(maxHeight), audioOnly: audioOnly, fromStart: fromStart)
         }
         guard let url = URL(string: playable.url) else { return }
         if playable.audioOnly {
             PlayerPresenter.shared.stop()
-            AudioPlayer.shared.play(url: url, video: video)
+            AudioPlayer.shared.play(url: url, video: video, start: playable.startSecs)
         } else {
             AudioPlayer.shared.stop()
             PlayerPresenter.shared.present(
-                PlayItem(id: video.id, url: url, video: video, maxHeight: maxHeight),
+                PlayItem(id: video.id, url: url, video: video, maxHeight: maxHeight, start: playable.startSecs),
                 backgroundPlayback: backgroundPlayback
             )
         }
-        setWatched(video, true)
+    }
+
+    /// Saves a resume point, or marks the video watched once it's finished.
+    /// `refresh` reloads the lists so their progress bars catch up.
+    func saveProgress(_ video: Video, position: Double, duration: Double?, refresh: Bool) {
+        guard let core else { return }
+        Task {
+            try? await background {
+                try core.saveProgress(id: video.id, positionSecs: position, durationSecs: duration)
+            }
+            if refresh { watchedVersion += 1 }
+        }
     }
 
     func signIn() {

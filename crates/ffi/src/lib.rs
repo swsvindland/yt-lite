@@ -78,6 +78,8 @@ pub struct Video {
     pub duration_secs: Option<u32>,
     pub live: bool,
     pub watched: bool,
+    /// Fraction played (0–1) if it was stopped partway, for a progress bar.
+    pub progress: Option<f64>,
 }
 
 impl From<VideoRow> for Video {
@@ -90,6 +92,7 @@ impl From<VideoRow> for Video {
             duration_secs: v.duration_secs,
             live: v.live,
             watched: v.watched,
+            progress: v.progress,
         }
     }
 }
@@ -102,6 +105,8 @@ pub struct Playable {
     pub title: String,
     pub is_live: bool,
     pub audio_only: bool,
+    /// Where to start (seconds): the resume point, or 0.
+    pub start_secs: f64,
 }
 
 #[derive(uniffi::Object)]
@@ -233,15 +238,37 @@ impl YtLite {
         self.videos(Feed::Explore, false)
     }
 
+    /// Also forgets the resume point.
     pub fn set_watched(&self, id: String, watched: bool) -> Result<()> {
         Ok(self.services.db.set_watched(&id, watched)?)
+    }
+
+    /// Records where playback got to: a resume point, or watched once it's
+    /// finished. `duration_secs`: the player's, if it knows it.
+    pub fn save_progress(
+        &self,
+        id: String,
+        position_secs: f64,
+        duration_secs: Option<f64>,
+    ) -> Result<()> {
+        self.services
+            .db
+            .save_progress(&id, position_secs, duration_secs)?;
+        Ok(())
     }
 
     /// Resolves streams natively (no yt-dlp on iOS). Video: the HLS master
     /// playlist. `audio_only`: the master's audio-only rendition, which
     /// AVPlayer plays with no video decoding (podcasts), or the master itself
     /// if that can't be found, so audio-only never falls back to video.
-    pub fn play(&self, id: String, max_height: u32, audio_only: bool) -> Result<Playable> {
+    /// Starts at the resume point unless `from_start`.
+    pub fn play(
+        &self,
+        id: String,
+        max_height: u32,
+        audio_only: bool,
+        from_start: bool,
+    ) -> Result<Playable> {
         let prefs = Prefs {
             max_tier: max_height,
             ..Prefs::default()
@@ -264,11 +291,24 @@ impl YtLite {
         } else {
             master
         };
+        let db = &self.services.db;
+        if let Err(e) = db.mark_played(&id) {
+            log::warn!("mark_played {id}: {e:#}");
+        }
+        let start_secs = if from_start || r.is_live {
+            None
+        } else {
+            db.resume_position(&id).unwrap_or_else(|e| {
+                log::warn!("resume_position {id}: {e:#}");
+                None
+            })
+        };
         Ok(Playable {
             url,
             title: r.title,
             is_live: r.is_live,
             audio_only,
+            start_secs: start_secs.unwrap_or(0.0),
         })
     }
 }

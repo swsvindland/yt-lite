@@ -155,7 +155,7 @@ final class CarPlayController: NSObject, CPTabBarTemplateDelegate {
             image: cached ?? UIImage(systemName: "play.rectangle")
         )
         item.isPlaying = AudioPlayer.shared.current?.id == video.id
-        item.playbackProgress = video.watched ? 1 : 0
+        item.playbackProgress = video.progress ?? (video.watched ? 1 : 0)
         item.handler = { [weak self] _, completion in
             Task {
                 await self?.listen(video)

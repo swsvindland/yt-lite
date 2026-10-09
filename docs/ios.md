@@ -30,7 +30,11 @@ a loopback port the Rust core listens on, so there's nothing new to set up in Go
 
 - Tabs: **Subscriptions** (sign in), **For you**, **Explore** (topic chips), **Search**, **Settings**
   (account, max quality, hide watched).
-- Pull to refresh; long-press a video to mark it watched/unwatched or share it.
+- Pull to refresh; long-press a video to mark it watched/unwatched, start it over, or share it.
+- **Progress:** videos resume where you stopped them, and count as watched only once they've
+  played to the end (within the last 5%, 10 s to 1 min). A red bar on the thumbnail shows how far
+  you got. `PlaybackProgress.swift` saves the position on pause, stop and backgrounding, and every
+  10 s; the rules live in `yt-lite-core` (`progress.rs`), shared with the desktop players.
 - Playback: `AVPlayerViewController` presented modally with the resolver's HLS stream. You get
   native controls, Picture in Picture and AirPlay, capped with `preferredMaximumResolution`.
 - **Keep playing in background** (Settings, on by default): when you lock the phone or switch

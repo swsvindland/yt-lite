@@ -3,7 +3,8 @@
 //! Nothing to install; decoding is hardware-accelerated by the OS.
 //!
 //! [`SystemPlayer`] lives on the UI thread; [`PlayRequest`]s are produced in the
-//! background by `player::Player::prepare`.
+//! background by `player::Player::prepare`. `SystemPlayer::poll` reports where
+//! playback got to, so the UI can save it.
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -18,6 +19,7 @@ pub use windows::SystemPlayer;
 /// What the system player needs to start a video.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayRequest {
+    pub video_id: String,
     /// HLS master playlist (or any URL the OS player can open).
     pub url: String,
     pub title: String,
@@ -25,6 +27,8 @@ pub struct PlayRequest {
     pub max_tier: u32,
     /// Video width / height, to size the window.
     pub aspect: Option<f64>,
+    /// Resume point (seconds).
+    pub start_secs: f64,
 }
 
 /// True when this platform has a system player backend.
@@ -38,5 +42,9 @@ pub struct SystemPlayer;
 impl SystemPlayer {
     pub fn open(&mut self, _req: &PlayRequest) -> anyhow::Result<()> {
         anyhow::bail!("no system player on this platform; set player.backend = \"mpv\"")
+    }
+
+    pub fn poll(&mut self) -> Vec<crate::player::Position> {
+        Vec::new()
     }
 }

@@ -8,16 +8,20 @@
 //! If native resolution fails (YouTube changed something, age gate, ...),
 //! yt-dlp is used when installed: it supplies a URL for the system player, or
 //! acts as mpv's resolver.
+//!
+//! Videos start at their resume point, and every backend reports where
+//! playback got to as [`Position`]s, which the UI saves.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
 use yt_lite_core::resolve::{Prefs, Resolved, StreamResolver};
 use yt_lite_core::youtube::watch_url;
 
 use crate::config::{Paths, PlayerConfig};
+use crate::mpv_ipc;
 use crate::system_player::{self, PlayRequest};
 
 /// googlevideo throttles open-ended requests to roughly real-time after a
@@ -31,6 +35,31 @@ pub enum Backend {
     Mpv,
 }
 
+/// Where a video's playback got to, as a player reported it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Position {
+    pub video_id: String,
+    pub secs: f64,
+    /// The player's duration, if it knows it.
+    pub duration: Option<f64>,
+    /// The player has closed this video (or moved on): its last report.
+    pub done: bool,
+}
+
+/// Positions reported from background threads (mpv), collected by the UI.
+#[derive(Clone, Default)]
+pub struct PositionQueue(Arc<Mutex<Vec<Position>>>);
+
+impl PositionQueue {
+    pub fn extend(&self, positions: impl IntoIterator<Item = Position>) {
+        self.0.lock().unwrap().extend(positions);
+    }
+
+    pub fn take(&self) -> Vec<Position> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
 #[derive(Clone)]
 pub struct Player {
     backend: Backend,
@@ -40,6 +69,9 @@ pub struct Player {
     prefs: Prefs,
     extra_args: Vec<String>,
     native: Option<Arc<dyn StreamResolver>>,
+    /// Where the video being prepared starts (seconds).
+    start_secs: f64,
+    positions: PositionQueue,
 }
 
 /// How the stream URL was obtained.
@@ -122,6 +154,8 @@ impl Player {
             },
             extra_args: cfg.extra_args.clone(),
             native,
+            start_secs: 0.0,
+            positions: PositionQueue::default(),
         };
         log::info!(
             "player: backend={:?} mpv={:?} yt-dlp={:?} native={:?} sponsorblock={:?}",
@@ -134,11 +168,19 @@ impl Player {
         me
     }
 
+    /// Positions mpv reported since the last call.
+    pub fn take_positions(&self) -> Vec<Position> {
+        self.positions.take()
+    }
+
     fn common_args(&self, title: &str) -> Vec<String> {
         let mut args = vec![
             "--force-window=immediate".into(),
             format!("--force-media-title={title}"),
         ];
+        if self.start_secs > 0.0 {
+            args.push(format!("--start={:.1}", self.start_secs));
+        }
         if let Some(script) = &self.sponsorblock_script {
             args.push(format!("--script={}", script.display()));
         }
@@ -195,9 +237,17 @@ impl Player {
     /// Blocking (network). For the mpv backend this also starts mpv; for the
     /// system backend it returns the request to open on the UI thread.
     /// `max_tier` overrides the configured quality (it can change at runtime).
-    pub fn prepare(&self, video_id: &str, title: &str, max_tier: u32) -> Result<Prepared> {
+    /// Playback starts at `start_secs`.
+    pub fn prepare(
+        &self,
+        video_id: &str,
+        title: &str,
+        max_tier: u32,
+        start_secs: f64,
+    ) -> Result<Prepared> {
         let mut this = self.clone();
         this.prefs.max_tier = max_tier;
+        this.start_secs = start_secs;
         match this.backend {
             Backend::Mpv => this.play_mpv(video_id, title).map(Prepared::Started),
             Backend::System => this
@@ -218,10 +268,12 @@ impl Player {
                         _ => None,
                     });
                     let req = PlayRequest {
+                        video_id: video_id.to_string(),
                         url: r.hls.clone().unwrap_or_default(),
                         title: title.to_string(),
                         max_tier: self.prefs.max_tier,
                         aspect,
+                        start_secs: if r.is_live { 0.0 } else { self.start_secs },
                     };
                     return Ok((req, Method::Native));
                 }
@@ -247,10 +299,12 @@ impl Player {
                 None => e,
             })?;
         let req = PlayRequest {
+            video_id: video_id.to_string(),
             url,
             title: title.to_string(),
             max_tier: self.prefs.max_tier,
             aspect: None,
+            start_secs: self.start_secs,
         };
         Ok((req, Method::YtDlp))
     }
@@ -275,7 +329,7 @@ impl Player {
                         r.audio.as_ref().map(|a| (a.itag, a.codecs.as_str())),
                         r.is_live
                     );
-                    spawn(mpv, self.native_args(&r, title))?;
+                    self.start_mpv(mpv, video_id, self.native_args(&r, title), !r.is_live)?;
                     return Ok(Method::Native);
                 }
                 Err(e) => {
@@ -292,8 +346,28 @@ impl Player {
                 None => anyhow!(Missing::YtDlp.install_hint()),
             });
         }
-        spawn(mpv, self.ytdlp_args(video_id, title))?;
+        self.start_mpv(mpv, video_id, self.ytdlp_args(video_id, title), true)?;
         Ok(Method::YtDlp)
+    }
+
+    /// Starts mpv; with `track`, follows its playback position over IPC.
+    fn start_mpv(
+        &self,
+        mpv: &Path,
+        video_id: &str,
+        mut args: Vec<String>,
+        track: bool,
+    ) -> Result<()> {
+        // First, so an --input-ipc-server in the user's extra_args wins.
+        let ipc = track.then(mpv_ipc::endpoint);
+        if let Some(ipc) = &ipc {
+            args.insert(0, format!("--input-ipc-server={ipc}"));
+        }
+        spawn(mpv, args)?;
+        if let Some(ipc) = ipc {
+            mpv_ipc::watch(ipc, video_id.to_string(), self.positions.clone());
+        }
+        Ok(())
     }
 }
 
@@ -434,6 +508,8 @@ mod tests {
             },
             extra_args: vec!["--volume=50".into()],
             native: None,
+            start_secs: 0.0,
+            positions: PositionQueue::default(),
         }
     }
 
@@ -488,6 +564,21 @@ mod tests {
         assert!(args.contains(&"--audio-file=https://v.example/audio".to_string()));
         assert_eq!(args.last().unwrap(), "https://v.example/video");
         assert!(!args.iter().any(|a| a.contains("hls")));
+    }
+
+    #[test]
+    fn resume_point_becomes_start() {
+        let mut p = player();
+        assert!(
+            !p.ytdlp_args("abcdefghijk", "T")
+                .iter()
+                .any(|a| a.starts_with("--start"))
+        );
+        p.start_secs = 125.0;
+        assert!(
+            p.ytdlp_args("abcdefghijk", "T")
+                .contains(&"--start=125.0".to_string())
+        );
     }
 
     #[test]

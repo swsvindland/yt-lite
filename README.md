@@ -19,8 +19,10 @@ never loads YouTube's web player or a web view.
   works without signing in.
 - Responsive grid: thumbnail, title, channel, duration, age
 - **No Shorts, anywhere.** Filtered centrally for every feed source; the filter fails closed
-- Click a video to play it in a native player window (1080p max by default); watched state is
-  kept locally
+- Click a video to play it in a native player window (1080p max by default). It resumes where
+  you stopped (a red bar on the thumbnail shows how far you got; ↺ starts over) and counts as
+  watched once it has played to the end. Progress and watched state are kept locally, for every
+  player backend
 - Native stream resolver (a Rust port of the relevant part of yt-dlp), yt-dlp as fallback
 - Optional SponsorBlock via the mpv script (mpv backend)
 - Low memory: virtualized grid, byte-capped thumbnail cache, idle trimming, and a live RSS readout
@@ -163,7 +165,7 @@ Other locations:
 
 | What | Where |
 |---|---|
-| SQLite cache (videos, durations, Shorts verdicts, watched) | `%LOCALAPPDATA%\yt-lite\data\cache.sqlite3` |
+| SQLite cache (videos, durations, Shorts verdicts, watched, resume points) | `%LOCALAPPDATA%\yt-lite\data\cache.sqlite3` |
 | Thumbnail disk cache | `%LOCALAPPDATA%\yt-lite\cache\thumbs\` |
 
 Environment variables:
@@ -279,11 +281,11 @@ Recommendations without signing in to YouTube. Logged out, YouTube's own home fe
 ("Try searching to get started"), so yt-lite builds one:
 
 1. Seeds are the 10 videos you most recently played in yt-lite, topped up with your newest
-   subscription uploads until you've watched a few.
+   subscription uploads until you've played a few.
 2. For each seed, the InnerTube `next` endpoint (WEB client, logged out) returns the related
    videos youtube.com shows next to it.
 3. The lists are interleaved round-robin, so no single seed dominates. Duplicates, the seeds and
-   anything already watched are dropped, up to 150 videos.
+   anything already played are dropped, up to 150 videos.
 4. Listings include the duration, so the shared pipeline's Shorts filter rarely needs the Data
    API. Shorts shelves are skipped outright.
 

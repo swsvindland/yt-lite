@@ -36,6 +36,9 @@ final class PlayerPresenter: NSObject, AVPlayerViewControllerDelegate {
         stop()
         let player = AVPlayer(playerItem: playerItem)
         player.audiovisualBackgroundPlaybackPolicy = backgroundPlayback ? .continuesIfPossible : .pauses
+        if item.start > 0 {
+            player.seek(to: CMTime(seconds: item.start, preferredTimescale: 600))
+        }
         let controller = AVPlayerViewController()
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
@@ -45,6 +48,7 @@ final class PlayerPresenter: NSObject, AVPlayerViewControllerDelegate {
         controller.modalPresentationStyle = .fullScreen
         current = controller
         NowPlaying.shared.attach(player: player, video: item.video)
+        PlaybackProgress.shared.attach(player: player, video: item.video)
 
         topViewController()?.present(controller, animated: true) {
             player.play()
@@ -52,6 +56,7 @@ final class PlayerPresenter: NSObject, AVPlayerViewControllerDelegate {
     }
 
     func stop() {
+        if let player = current?.player ?? backgroundPlayer { PlaybackProgress.shared.detach(player) }
         current?.player?.pause()
         backgroundPlayer?.pause()
         if current != nil { NowPlaying.shared.detach() }
@@ -99,6 +104,7 @@ final class PlayerPresenter: NSObject, AVPlayerViewControllerDelegate {
             guard !context.isCancelled else { return }
             Task { @MainActor in
                 if controller.presentingViewController == nil, !self.inPictureInPicture {
+                    if let player = controller.player { PlaybackProgress.shared.detach(player) }
                     controller.player?.pause()
                     if self.current === controller {
                         self.current = nil

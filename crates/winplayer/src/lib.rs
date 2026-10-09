@@ -9,6 +9,9 @@
 //! along the bottom shows progress; click it to seek. Closing the window stops
 //! playback and hides it for reuse.
 //!
+//! [`position`] and [`take_closed`] tell the app how far a video got, so it
+//! can resume there.
+//!
 //! Everything runs on the UI thread that calls [`open`].
 #![cfg(windows)]
 
@@ -19,7 +22,7 @@ use anyhow::{Context as _, Result};
 use windows::Foundation::{Size, TimeSpan, TypedEventHandler, Uri};
 use windows::Media::Core::MediaSource;
 use windows::Media::Playback::{
-    IMediaPlaybackSource, MediaPlaybackSession, MediaPlaybackState, MediaPlayer,
+    IMediaPlaybackSource, MediaPlaybackItem, MediaPlaybackSession, MediaPlaybackState, MediaPlayer,
     MediaPlayerFailedEventArgs, MediaPlayerSurface,
 };
 use windows::System::{DispatcherQueue, DispatcherQueueController};
@@ -65,19 +68,37 @@ struct State {
     title: String,
     /// Saved placement and style while fullscreen.
     fullscreen: Option<(WINDOWPLACEMENT, i32)>,
+    /// Where the video was when the window closed, until [`take_closed`].
+    closed_at: Option<Times>,
+}
+
+/// Playback position and duration, in seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Times {
+    pub position: f64,
+    pub duration: Option<f64>,
 }
 
 /// Opens `url` (an HLS master playlist or any URL MediaPlayer can open) in the
-/// player window, creating it on first use.
-pub fn open(url: &str, title: &str, aspect: Option<f64>) -> Result<()> {
+/// player window, creating it on first use. Playback starts at `start_secs`.
+pub fn open(url: &str, title: &str, aspect: Option<f64>, start_secs: f64) -> Result<()> {
     let uri = Uri::CreateUri(&HSTRING::from(url)).context("invalid stream URL")?;
-    let source = MediaSource::CreateFromUri(&uri)?;
+    let media = MediaSource::CreateFromUri(&uri)?;
+    let source: IMediaPlaybackSource = if start_secs > 0.0 {
+        let start = TimeSpan {
+            Duration: (start_secs * 10_000_000.0) as i64,
+        };
+        MediaPlaybackItem::CreateWithStartTime(&media, start)?.cast()?
+    } else {
+        media.cast()?
+    };
 
     let reused = STATE.with_borrow_mut(|state| -> Result<bool> {
         let Some(s) = state.as_mut() else {
             return Ok(false);
         };
         s.title = title.to_string();
+        s.closed_at = None;
         s.player.SetSource(&source)?;
         s.player.Play()?;
         unsafe {
@@ -105,6 +126,17 @@ pub fn open(url: &str, title: &str, aspect: Option<f64>) -> Result<()> {
         s.update_title();
     });
     Ok(())
+}
+
+/// Where the video in the window is, once it has opened. `None` when the
+/// window is closed.
+pub fn position() -> Option<Times> {
+    with_state(|s| s.playback_times()).flatten()
+}
+
+/// Where the video was when the user closed the window (once).
+pub fn take_closed() -> Option<Times> {
+    with_state(|s| s.closed_at.take()).flatten()
 }
 
 fn create(title: &str, aspect: Option<f64>) -> Result<State> {
@@ -266,6 +298,7 @@ fn create(title: &str, aspect: Option<f64>) -> Result<State> {
         _dispatcher: dispatcher,
         title: title.to_string(),
         fullscreen: None,
+        closed_at: None,
     })
 }
 
@@ -322,6 +355,20 @@ impl State {
             s.Position().ok()?.Duration,
             s.NaturalDuration().ok()?.Duration,
         ))
+    }
+
+    /// Position and duration once the video has opened (while it opens the
+    /// position is 0, which would erase the resume point).
+    fn playback_times(&self) -> Option<Times> {
+        let state = self.session()?.PlaybackState().ok()?;
+        if state == MediaPlaybackState::None || state == MediaPlaybackState::Opening {
+            return None;
+        }
+        let (pos, dur) = self.times()?;
+        Some(Times {
+            position: pos as f64 / 10_000_000.0,
+            duration: (dur > 0).then(|| dur as f64 / 10_000_000.0),
+        })
     }
 
     fn seek_by(&self, secs: i64) {
@@ -473,6 +520,7 @@ impl State {
         if self.fullscreen.is_some() {
             self.toggle_fullscreen();
         }
+        self.closed_at = self.playback_times();
         let _ = self.player.Pause();
         let _ = self.player.SetSource(None::<&IMediaPlaybackSource>);
         unsafe {

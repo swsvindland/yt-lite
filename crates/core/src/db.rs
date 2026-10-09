@@ -1,5 +1,6 @@
 //! SQLite cache: videos (with durations and Shorts verdicts, fetched once),
-//! channels, per-source feed membership, and local watched state.
+//! channels, per-source feed membership, and local watched state and
+//! playback progress.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -9,6 +10,7 @@ use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::feed::{FeedItem, FeedKind, Retain};
+use crate::progress::Progress;
 use crate::shorts::{DurationInfo, LinkHint, Verdict};
 use crate::youtube::api::{Subscription, VideoDetails};
 
@@ -30,6 +32,8 @@ pub struct VideoRow {
     pub duration_secs: Option<u32>,
     pub live: bool,
     pub watched: bool,
+    /// Fraction played (0–1) if it was stopped partway, for a progress bar.
+    pub progress: Option<f64>,
 }
 
 /// A video awaiting a Shorts verdict.
@@ -62,7 +66,9 @@ CREATE TABLE IF NOT EXISTS videos (
     enrich_attempts INTEGER NOT NULL DEFAULT 0,
     short           INTEGER,
     watched_at      INTEGER,
-    first_seen      INTEGER NOT NULL
+    first_seen      INTEGER NOT NULL,
+    played_at       INTEGER,
+    resume_secs     REAL
 );
 CREATE INDEX IF NOT EXISTS videos_published ON videos(published DESC);
 CREATE INDEX IF NOT EXISTS videos_unclassified ON videos(short) WHERE short IS NULL;
@@ -88,13 +94,26 @@ CREATE TABLE IF NOT EXISTS meta (
 
 /// Upgrades databases created by older builds.
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    let has_position: bool = conn
-        .prepare("SELECT 1 FROM pragma_table_info('feed_items') WHERE name = 'position'")?
-        .exists([])?;
-    if !has_position {
-        conn.execute_batch("ALTER TABLE feed_items ADD COLUMN position INTEGER")?;
+    add_column(conn, "feed_items", "position", "INTEGER")?;
+    if add_column(conn, "videos", "played_at", "INTEGER")? {
+        // Older builds marked videos watched as soon as they started playing.
+        conn.execute_batch("UPDATE videos SET played_at = watched_at")?;
     }
+    add_column(conn, "videos", "resume_secs", "REAL")?;
     Ok(())
+}
+
+/// Adds a column the table was created without. Returns whether it did.
+fn add_column(conn: &Connection, table: &str, column: &str, decl: &str) -> rusqlite::Result<bool> {
+    let exists = conn
+        .prepare(&format!(
+            "SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1"
+        ))?
+        .exists([column])?;
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
+    }
+    Ok(!exists)
 }
 
 impl Db {
@@ -336,7 +355,9 @@ impl Db {
         self.with(|c| {
             let mut stmt = c.prepare(
                 "SELECT v.id, v.title, v.channel_title, v.published, v.duration_secs, v.live,
-                        v.watched_at IS NOT NULL
+                        v.watched_at IS NOT NULL,
+                        CASE WHEN v.duration_secs > 0
+                             THEN min(v.resume_secs / v.duration_secs, 1.0) END
                  FROM feed_items f JOIN videos v ON v.id = f.video_id
                  WHERE f.source = ?1 AND v.short = 0
                    AND (f.position IS NOT NULL OR v.published >= ?2)
@@ -355,6 +376,7 @@ impl Db {
                         duration_secs: r.get(4)?,
                         live: r.get(5)?,
                         watched: r.get(6)?,
+                        progress: r.get(7)?,
                     })
                 },
             )?
@@ -362,11 +384,12 @@ impl Db {
         })
     }
 
-    /// Most recently watched video ids (seeds for For you).
-    pub fn recently_watched(&self, limit: u32) -> Result<Vec<String>> {
+    /// Most recently played or watched video ids (seeds for For you).
+    pub fn recently_played(&self, limit: u32) -> Result<Vec<String>> {
         self.with(|c| {
             let mut stmt = c.prepare(
-                "SELECT id FROM videos WHERE watched_at IS NOT NULL ORDER BY watched_at DESC LIMIT ?1",
+                "SELECT id FROM videos WHERE played_at IS NOT NULL OR watched_at IS NOT NULL
+                 ORDER BY max(coalesce(played_at, 0), coalesce(watched_at, 0)) DESC LIMIT ?1",
             )?;
             stmt.query_map([limit], |r| r.get(0))?.collect()
         })
@@ -384,21 +407,86 @@ impl Db {
         })
     }
 
-    pub fn watched_ids(&self) -> Result<std::collections::HashSet<String>> {
+    /// Videos played or marked watched (For you leaves them out).
+    pub fn played_ids(&self) -> Result<std::collections::HashSet<String>> {
         self.with(|c| {
-            let mut stmt = c.prepare("SELECT id FROM videos WHERE watched_at IS NOT NULL")?;
+            let mut stmt = c.prepare(
+                "SELECT id FROM videos WHERE played_at IS NOT NULL OR watched_at IS NOT NULL",
+            )?;
             stmt.query_map([], |r| r.get(0))?.collect()
         })
     }
 
+    /// Marking watched or unwatched also forgets the resume point.
     pub fn set_watched(&self, id: &str, watched: bool) -> Result<()> {
         let ts = watched.then(|| Utc::now().timestamp());
         self.with(|c| {
             c.execute(
-                "UPDATE videos SET watched_at=?2 WHERE id=?1",
+                "UPDATE videos SET watched_at=?2, resume_secs=NULL WHERE id=?1",
                 params![id, ts],
             )
             .map(drop)
+        })
+    }
+
+    /// Records that playback of `id` started.
+    pub fn mark_played(&self, id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE videos SET played_at=?2 WHERE id=?1",
+                params![id, Utc::now().timestamp()],
+            )
+            .map(drop)
+        })
+    }
+
+    /// Where to resume `id`, if it was stopped partway.
+    pub fn resume_position(&self, id: &str) -> Result<Option<f64>> {
+        self.with(|c| {
+            c.query_row("SELECT resume_secs FROM videos WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map(Option::flatten)
+        })
+    }
+
+    /// Records where playback of `id` got to: a resume point, or watched once
+    /// it's finished (see [`Progress`]). `duration`: the player's, if known;
+    /// otherwise the listing's is used. `None` for live streams and unknown
+    /// videos, which have no progress.
+    pub fn save_progress(
+        &self,
+        id: &str,
+        position: f64,
+        duration: Option<f64>,
+    ) -> Result<Option<Progress>> {
+        self.with(|c| {
+            let row: Option<(Option<u32>, bool)> = c
+                .query_row(
+                    "SELECT duration_secs, live FROM videos WHERE id=?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((listed, false)) = row else {
+                return Ok(None);
+            };
+            let progress = Progress::at(position, duration.or(listed.map(f64::from)));
+            match progress {
+                Progress::Finished => c.execute(
+                    "UPDATE videos SET watched_at=?2, resume_secs=NULL WHERE id=?1",
+                    params![id, Utc::now().timestamp()],
+                ),
+                Progress::Resume(at) => c.execute(
+                    "UPDATE videos SET resume_secs=?2 WHERE id=?1",
+                    params![id, at],
+                ),
+                Progress::Start => {
+                    c.execute("UPDATE videos SET resume_secs=NULL WHERE id=?1", [id])
+                }
+            }?;
+            Ok(Some(progress))
         })
     }
 
@@ -571,6 +659,123 @@ mod tests {
         assert!(!db.feed(query()).unwrap()[0].watched);
     }
 
+    /// A displayable 10-minute video and a live stream in Subscriptions.
+    fn progress_db() -> Db {
+        let db = Db::open_in_memory().unwrap();
+        let mut ten_min = item("a", "UC1", LinkHint::WatchLink, 1);
+        ten_min.duration = Some(DurationInfo {
+            secs: 600,
+            live_or_upcoming: false,
+        });
+        let mut live = item("live", "UC1", LinkHint::WatchLink, 1);
+        live.duration = Some(DurationInfo {
+            secs: 0,
+            live_or_upcoming: true,
+        });
+        db.upsert_items(
+            FeedKind::Subscriptions,
+            &[ten_min, live],
+            &Retain::Channels(vec!["UC1".into()]),
+        )
+        .unwrap();
+        db.set_verdicts(&[
+            ("a".into(), Verdict::NotShort),
+            ("live".into(), Verdict::NotShort),
+        ])
+        .unwrap();
+        db
+    }
+
+    fn row(db: &Db, id: &str) -> VideoRow {
+        db.feed(query())
+            .unwrap()
+            .into_iter()
+            .find(|v| v.id == id)
+            .unwrap()
+    }
+
+    #[test]
+    fn progress_resumes_then_finishes() {
+        let db = progress_db();
+        assert_eq!(db.resume_position("a").unwrap(), None);
+        assert_eq!(row(&db, "a").progress, None);
+
+        // Stopped partway: a resume point, not watched. The listing's
+        // duration is used when the player doesn't know it.
+        assert_eq!(
+            db.save_progress("a", 150.0, None).unwrap(),
+            Some(Progress::Resume(150.0))
+        );
+        assert_eq!(db.resume_position("a").unwrap(), Some(150.0));
+        let a = row(&db, "a");
+        assert!(!a.watched);
+        assert_eq!(a.progress, Some(0.25));
+
+        // Barely started again: nothing to resume.
+        db.save_progress("a", 3.0, Some(600.0)).unwrap();
+        assert_eq!(db.resume_position("a").unwrap(), None);
+
+        // Played to the end: watched, resume point gone.
+        db.save_progress("a", 300.0, Some(600.0)).unwrap();
+        assert_eq!(
+            db.save_progress("a", 595.0, Some(600.0)).unwrap(),
+            Some(Progress::Finished)
+        );
+        let a = row(&db, "a");
+        assert!(a.watched);
+        assert_eq!(a.progress, None);
+        assert_eq!(db.resume_position("a").unwrap(), None);
+    }
+
+    #[test]
+    fn live_and_unknown_videos_have_no_progress() {
+        let db = progress_db();
+        assert_eq!(db.save_progress("live", 300.0, None).unwrap(), None);
+        assert_eq!(db.resume_position("live").unwrap(), None);
+        assert_eq!(db.save_progress("nope", 300.0, None).unwrap(), None);
+        assert_eq!(db.resume_position("nope").unwrap(), None);
+    }
+
+    #[test]
+    fn marking_watched_or_unwatched_forgets_the_resume_point() {
+        let db = progress_db();
+        db.save_progress("a", 150.0, None).unwrap();
+        db.set_watched("a", true).unwrap();
+        assert_eq!(db.resume_position("a").unwrap(), None);
+        db.save_progress("a", 150.0, None).unwrap();
+        db.set_watched("a", false).unwrap();
+        assert_eq!(db.resume_position("a").unwrap(), None);
+        assert!(!row(&db, "a").watched);
+    }
+
+    #[test]
+    fn migration_keeps_old_watched_videos_as_played() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE videos (
+                id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, channel_title TEXT NOT NULL,
+                title TEXT NOT NULL, published INTEGER NOT NULL,
+                link_hint INTEGER NOT NULL DEFAULT 0, duration_secs INTEGER,
+                live INTEGER NOT NULL DEFAULT 0, enrich_attempts INTEGER NOT NULL DEFAULT 0,
+                short INTEGER, watched_at INTEGER, first_seen INTEGER NOT NULL);
+             INSERT INTO videos(id, channel_id, channel_title, title, published, watched_at, first_seen)
+             VALUES ('w', 'UC1', 'c', 't', 1, 1700000000, 1),
+                    ('u', 'UC1', 'c', 't', 1, NULL, 1);",
+        )
+        .unwrap();
+        let db = Db::init(conn).unwrap();
+        assert_eq!(db.recently_played(5).unwrap(), vec!["w"]);
+        let played_at: Option<i64> = db
+            .with(|c| {
+                c.query_row("SELECT played_at FROM videos WHERE id='w'", [], |r| {
+                    r.get(0)
+                })
+            })
+            .unwrap();
+        assert_eq!(played_at, Some(1_700_000_000));
+        assert_eq!(db.resume_position("w").unwrap(), None);
+    }
+
     #[test]
     fn only_fetched_replaces_membership() {
         let db = Db::open_in_memory().unwrap();
@@ -668,8 +873,19 @@ mod tests {
             vec!["new"]
         );
         db.set_watched("older", true).unwrap();
-        assert_eq!(db.recently_watched(5).unwrap(), vec!["older"]);
-        assert!(db.watched_ids().unwrap().contains("older"));
+        assert_eq!(db.recently_played(5).unwrap(), vec!["older"]);
+        assert!(db.played_ids().unwrap().contains("older"));
+        // Started but not finished still counts, most recent first.
+        db.mark_played("new").unwrap();
+        db.with(|c| {
+            c.execute(
+                "UPDATE videos SET played_at = played_at + 10 WHERE id='new'",
+                [],
+            )
+        })
+        .unwrap();
+        assert_eq!(db.recently_played(5).unwrap(), vec!["new", "older"]);
+        assert!(db.played_ids().unwrap().contains("new"));
     }
 
     #[test]

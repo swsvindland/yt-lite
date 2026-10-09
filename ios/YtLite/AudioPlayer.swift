@@ -19,7 +19,8 @@ final class AudioPlayer {
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var rateObserver: NSKeyValueObservation?
 
-    func play(url: URL, video: Video) {
+    /// `start`: resume point (seconds).
+    func play(url: URL, video: Video, start: Double = 0) {
         stop()
         let item = AVPlayerItem(url: url)
         // Only matters if the core had to return the master playlist (no
@@ -27,8 +28,12 @@ final class AudioPlayer {
         item.preferredPeakBitRate = 1
         let player = AVPlayer(playerItem: item)
         player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
+        if start > 0 {
+            player.seek(to: CMTime(seconds: start, preferredTimescale: 600))
+        }
         self.player = player
         current = video
+        elapsed = start
         duration = Double(video.durationSecs ?? 0)
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main
@@ -50,6 +55,7 @@ final class AudioPlayer {
         }
         try? AVAudioSession.sharedInstance().setActive(true)
         NowPlaying.shared.attach(player: player, video: video)
+        PlaybackProgress.shared.attach(player: player, video: video)
         player.play()
     }
 
@@ -69,6 +75,7 @@ final class AudioPlayer {
     }
 
     func stop() {
+        if let player { PlaybackProgress.shared.detach(player) }
         if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
         rateObserver = nil

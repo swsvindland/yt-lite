@@ -2,6 +2,7 @@
 
 mod app_state;
 mod mem;
+mod mpv_ipc;
 mod player;
 mod system_player;
 mod thumbs;

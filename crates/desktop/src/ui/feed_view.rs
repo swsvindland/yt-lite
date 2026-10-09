@@ -47,6 +47,8 @@ struct Card {
     duration: Option<SharedString>,
     live: bool,
     watched: bool,
+    /// Fraction played if it was stopped partway.
+    progress: Option<f32>,
 }
 
 impl From<VideoRow> for Card {
@@ -62,6 +64,7 @@ impl From<VideoRow> for Card {
             published: v.published,
             live: v.live,
             watched: v.watched,
+            progress: v.progress.map(|p| p as f32),
         }
     }
 }
@@ -69,7 +72,7 @@ impl From<VideoRow> for Card {
 pub enum FeedEvent {
     OpenSettings,
     /// A video started playing (For you uses this to know it's stale).
-    Watched,
+    Played,
 }
 
 impl EventEmitter<FeedEvent> for FeedView {}
@@ -271,7 +274,7 @@ impl FeedView {
     }
 
     /// Re-reads the feed from SQLite (off the UI thread).
-    fn reload(&mut self, cx: &mut Context<Self>) {
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
         let db = AppServices::get(cx).db.clone();
         let q = self.query(cx);
         cx.spawn(async move |this, cx| {
@@ -408,28 +411,47 @@ impl FeedView {
         .detach();
     }
 
-    fn play(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn play(&mut self, ix: usize, from_start: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(card) = self.cards.get(ix) else {
             return;
         };
         let (id, title) = (card.id.clone(), card.title.clone());
-        self.play_video(id, title, window, cx);
+        self.play_video(id, title, from_start, window, cx);
     }
 
+    /// Resumes where the video was stopped unless `from_start`. It counts as
+    /// watched once it has played to the end (see `AppView`'s progress saving).
     pub fn play_video(
         &mut self,
         id: SharedString,
         title: SharedString,
+        from_start: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let player = self.shared.player.clone();
+        let db = AppServices::get(cx).db.clone();
         let max_tier = AppConfig::get(cx).player.max_height;
         self.status = format!("Opening “{title}”…").into();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let video_id = id.to_string();
-            let result = smol::unblock(move || player.prepare(&video_id, &title, max_tier)).await;
+            let result = smol::unblock(move || {
+                let start = if from_start {
+                    None
+                } else {
+                    db.resume_position(&video_id).unwrap_or_else(|e| {
+                        log::warn!("resume_position {video_id}: {e:#}");
+                        None
+                    })
+                };
+                let prepared = player.prepare(&video_id, &title, max_tier, start.unwrap_or(0.0))?;
+                if let Err(e) = db.mark_played(&video_id) {
+                    log::warn!("mark_played {video_id}: {e:#}");
+                }
+                Ok(prepared)
+            })
+            .await;
             this.update_in(cx, |v, window, cx| {
                 // The system player must be created on the UI thread.
                 let result = result.and_then(|prepared| match prepared {
@@ -447,10 +469,7 @@ impl FeedView {
                             Method::Native => "Playing".into(),
                             Method::YtDlp => "Playing (via yt-dlp)".into(),
                         };
-                        if let Some(ix) = v.cards.iter().position(|c| c.id == id) {
-                            v.set_watched(ix, true, cx);
-                        }
-                        cx.emit(FeedEvent::Watched);
+                        cx.emit(FeedEvent::Played);
                     }
                     Err(e) => {
                         v.status = "".into();
@@ -475,6 +494,7 @@ impl FeedView {
             return;
         };
         card.watched = watched;
+        card.progress = None;
         let id = card.id.to_string();
         let db = AppServices::get(cx).db.clone();
         cx.background_spawn(async move {
@@ -526,6 +546,7 @@ impl FeedView {
         });
         let theme = cx.theme();
         let watched = card.watched;
+        let played = card.progress.or(watched.then_some(1.0));
 
         let badge = match (&card.duration, card.live) {
             (_, true) => Some(
@@ -564,7 +585,7 @@ impl FeedView {
             .when_some(badge, |d, badge| {
                 d.child(div().absolute().bottom_2().right_2().child(badge))
             })
-            .when(watched, |d| {
+            .when_some(played, |d, fraction| {
                 d.child(
                     div()
                         .absolute()
@@ -572,7 +593,8 @@ impl FeedView {
                         .left_0()
                         .w_full()
                         .h(px(4.))
-                        .bg(rgb(0xff0033)),
+                        .bg(white().opacity(0.3))
+                        .child(div().h_full().w(relative(fraction)).bg(rgb(0xff0033))),
                 )
             });
 
@@ -593,6 +615,17 @@ impl FeedView {
                 cx.stop_propagation();
                 this.set_watched(ix, !watched, cx)
             }));
+        let restart = card.progress.is_some().then(|| {
+            Button::new("restart")
+                .ghost()
+                .xsmall()
+                .icon(IconName::Undo2)
+                .tooltip("Start over")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.play(ix, true, window, cx)
+                }))
+        });
 
         v_flex()
             .id(card.id.clone())
@@ -601,7 +634,7 @@ impl FeedView {
             .cursor_pointer()
             .group("card")
             .when(watched, |d| d.opacity(0.55))
-            .on_click(cx.listener(move |this, _, window, cx| this.play(ix, window, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| this.play(ix, false, window, cx)))
             .child(thumb)
             .child(
                 h_flex()
@@ -634,6 +667,7 @@ impl FeedView {
                                     )),
                             ),
                     )
+                    .children(restart)
                     .child(eye),
             )
             .into_any_element()

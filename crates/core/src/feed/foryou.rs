@@ -1,9 +1,9 @@
 //! "For you": recommendations without signing in to YouTube.
 //!
-//! Seeds are the videos you most recently watched in yt-lite (falling back to
+//! Seeds are the videos you most recently played in yt-lite (falling back to
 //! the newest subscription uploads). For each seed we fetch YouTube's related
 //! videos, interleave the lists round-robin so no single seed dominates, and
-//! drop duplicates and anything already watched. Related listings include the
+//! drop duplicates and anything already played. Related listings include the
 //! duration, so Shorts filtering rarely needs the Data API.
 
 use std::collections::HashSet;
@@ -15,9 +15,9 @@ use super::{FeedItem, FeedKind, FeedSource, Fetched, Progress, Retain};
 use crate::net::parallel_map;
 use crate::youtube::related;
 
-/// How many watched videos seed the feed.
+/// How many played videos seed the feed.
 const SEEDS: u32 = 10;
-/// Fallback seeds from subscriptions when little has been watched yet.
+/// Fallback seeds from subscriptions when little has been played yet.
 const MIN_SEEDS: usize = 4;
 const MAX_ITEMS: usize = 150;
 
@@ -33,7 +33,7 @@ impl FeedSource for ForYouSource {
     }
 
     fn fetch(&self, s: &Services, progress: Progress) -> Result<Fetched> {
-        let mut seeds = s.db.recently_watched(SEEDS)?;
+        let mut seeds = s.db.recently_played(SEEDS)?;
         if seeds.len() < MIN_SEEDS {
             for id in s.db.newest_in_feed(FeedKind::Subscriptions, SEEDS)? {
                 if seeds.len() >= MIN_SEEDS {
@@ -67,7 +67,7 @@ impl FeedSource for ForYouSource {
             anyhow::bail!("couldn't load related videos from YouTube");
         }
 
-        let mut skip: HashSet<String> = s.db.watched_ids()?;
+        let mut skip: HashSet<String> = s.db.played_ids()?;
         skip.extend(seeds.iter().cloned());
         let items = interleave(lists, &skip, MAX_ITEMS);
         log::info!(

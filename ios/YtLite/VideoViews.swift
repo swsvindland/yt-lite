@@ -21,6 +21,13 @@ struct VideoGrid: View {
                         } label: {
                             Label("Listen (audio only)", systemImage: "headphones")
                         }
+                        if video.progress != nil {
+                            Button {
+                                model.play(video, fromStart: true)
+                            } label: {
+                                Label("Start over", systemImage: "arrow.counterclockwise")
+                            }
+                        }
                         Button {
                             model.setWatched(video, !video.watched)
                         } label: {
@@ -60,11 +67,8 @@ struct VideoCard: View {
                         .foregroundStyle(.white)
                         .padding(8)
                 }
-                if video.watched {
-                    Rectangle()
-                        .fill(Color.red)
-                        .frame(height: 4)
-                        .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 12, bottomTrailingRadius: 12))
+                if let fraction = video.progress ?? (video.watched ? 1 : nil) {
+                    ProgressBar(fraction: fraction)
                 }
             }
             VStack(alignment: .leading, spacing: 3) {
@@ -79,6 +83,22 @@ struct VideoCard: View {
         }
         .opacity(video.watched ? 0.55 : 1)
         .contentShape(Rectangle())
+    }
+}
+
+/// How much of a video was played, along the bottom of its thumbnail.
+struct ProgressBar: View {
+    let fraction: Double
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(.white.opacity(0.3))
+                Rectangle().fill(Color.red).frame(width: geometry.size.width * min(max(fraction, 0), 1))
+            }
+        }
+        .frame(height: 4)
+        .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 12, bottomTrailingRadius: 12))
     }
 }
 

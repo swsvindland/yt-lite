@@ -8,6 +8,7 @@ struct YtLiteApp: App {
     init() {
         // Keep audio playing in the background and allow Picture in Picture.
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        DownloadManager.shared.setUp()
     }
 
     var body: some Scene {
@@ -58,7 +59,15 @@ struct RootView: View {
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             model.onScreen = phase != .background
-            if phase == .active { Task { await model.checkSignIn() } }
+            switch phase {
+            case .active:
+                Task { await model.checkSignIn() }
+                DownloadManager.shared.resume()
+            case .background:
+                DownloadManager.shared.scheduleBackgroundWork()
+            default:
+                break
+            }
         }
     }
 }

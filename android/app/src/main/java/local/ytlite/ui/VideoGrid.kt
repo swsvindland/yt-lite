@@ -23,13 +23,21 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DownloadForOffline
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.DownloadForOffline
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.RemoveCircleOutline
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SmartDisplay
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -59,6 +67,7 @@ import local.ytlite.core.durationText
 import local.ytlite.core.thumbnailUrl
 import local.ytlite.core.watchUrl
 import local.ytlite.core.watchedText
+import uniffi.yt_lite_ffi.Offline
 import uniffi.yt_lite_ffi.Video
 
 /** Adaptive grid of video cards: one column on phones, more on tablets.
@@ -135,6 +144,7 @@ fun VideoCard(model: AppModel, video: Video, inHistory: Boolean = false) {
                 (video.progress ?: if (video.watched) 1.0 else null)?.let {
                     ProgressBar(it.toFloat(), Modifier.align(Alignment.BottomStart))
                 }
+                OfflineBadge(video.offline, Modifier.align(Alignment.TopStart).padding(8.dp))
             }
             Spacer(Modifier.height(8.dp))
             Text(
@@ -163,6 +173,7 @@ fun VideoCard(model: AppModel, video: Video, inHistory: Boolean = false) {
             } else {
                 MenuItem("Mark as watched", Icons.Outlined.Visibility) { menu = false; model.setWatched(video, true) }
             }
+            DownloadMenuItems(model, video) { menu = false }
             MenuItem("Share", Icons.Outlined.Share) {
                 menu = false
                 val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, video.watchUrl)
@@ -179,8 +190,50 @@ fun VideoCard(model: AppModel, video: Video, inHistory: Boolean = false) {
 }
 
 @Composable
-private fun MenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
+internal fun MenuItem(label: String, icon: ImageVector, onClick: () -> Unit) {
     DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) }, onClick = onClick)
+}
+
+/** Download, cancel, keep or delete, depending on what's downloaded. */
+@Composable
+private fun DownloadMenuItems(model: AppModel, video: Video, close: () -> Unit) {
+    fun then(action: () -> Unit): () -> Unit = { close(); action() }
+    when (video.offline) {
+        Offline.NO -> {
+            MenuItem("Download", Icons.Outlined.Download, then { model.download(video) })
+            MenuItem("Download audio only", Icons.Outlined.Headphones, then { model.download(video, audioOnly = true) })
+        }
+        Offline.QUEUED -> MenuItem("Cancel download", Icons.Outlined.Close, then { model.removeDownload(video) })
+        Offline.FAILED -> {
+            MenuItem("Try downloading again", Icons.Outlined.Refresh, then { model.download(video) })
+            MenuItem("Cancel download", Icons.Outlined.Close, then { model.removeDownload(video) })
+        }
+        Offline.SAVED -> MenuItem("Delete download", Icons.Outlined.Delete, then { model.removeDownload(video) })
+        Offline.SMART -> {
+            MenuItem("Keep downloaded", Icons.Outlined.PushPin, then { model.keepDownload(video) })
+            MenuItem("Delete download", Icons.Outlined.Delete, then { model.removeDownload(video) })
+        }
+    }
+}
+
+/** On a thumbnail: downloaded, downloading or failed. */
+@Composable
+fun OfflineBadge(offline: Offline, modifier: Modifier = Modifier) {
+    val (icon, label) = when (offline) {
+        Offline.SAVED, Offline.SMART -> Icons.Filled.DownloadForOffline to "Downloaded"
+        Offline.QUEUED -> Icons.Outlined.DownloadForOffline to "Downloading"
+        Offline.FAILED -> Icons.Outlined.ErrorOutline to "Download failed"
+        Offline.NO -> return
+    }
+    Icon(
+        icon,
+        contentDescription = label,
+        tint = Color.White,
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(50))
+            .padding(4.dp)
+            .size(18.dp),
+    )
 }
 
 /** How much of a video was played, along the bottom of its thumbnail. */

@@ -1,6 +1,6 @@
 //! SQLite cache: videos (with durations and Shorts verdicts, fetched once),
-//! channels, per-source feed membership, and local watched state and
-//! playback progress.
+//! channels, per-source feed membership, local watched state and playback
+//! progress, and downloads.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -9,6 +9,7 @@ use anyhow::Result;
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::feed::interest::Watched;
 use crate::feed::{FeedItem, FeedKind, Retain};
 use crate::progress::Progress;
 use crate::shorts::{DurationInfo, LinkHint, Verdict};
@@ -36,6 +37,94 @@ pub struct VideoRow {
     pub progress: Option<f64>,
     /// When it was last played or marked watched (unix seconds).
     pub last_played: Option<i64>,
+    pub offline: Offline,
+}
+
+/// Whether a video is (being) downloaded, as lists show it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Offline {
+    #[default]
+    No,
+    /// The user asked for it; it's waiting or downloading.
+    Queued,
+    /// The user asked for it, and it failed (see the download's error).
+    Failed,
+    /// Downloaded because the user asked: kept until they remove it.
+    Saved,
+    /// A smart download: kept while it's likely to be watched.
+    Smart,
+}
+
+/// A download's state (`downloads.state`: 0 to 3, in this order).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadState {
+    /// Waiting, or partly downloaded.
+    Queued,
+    Done,
+    /// Gave up (see `error`); the user can retry.
+    Failed,
+    /// The user removed it: smart downloads leave it alone from now on.
+    Removed,
+}
+
+impl DownloadState {
+    fn from_db(v: i64) -> Self {
+        match v {
+            1 => DownloadState::Done,
+            2 => DownloadState::Failed,
+            3 => DownloadState::Removed,
+            _ => DownloadState::Queued,
+        }
+    }
+}
+
+/// A row of `downloads`, with its video.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DownloadRow {
+    pub video: VideoRow,
+    /// A smart download (the app picked it), not one the user asked for.
+    pub smart: bool,
+    pub state: DownloadState,
+    pub audio_only: bool,
+    pub max_height: u32,
+    /// Size on disk once done.
+    pub bytes: u64,
+    /// File name in the downloads folder once done.
+    pub file: Option<String>,
+    /// What's being fetched (`itag:length` per stream), so a resumed
+    /// download continues the same streams.
+    pub streams: Option<String>,
+    pub requested_at: i64,
+    pub completed_at: Option<i64>,
+    pub attempts: u32,
+    pub error: Option<String>,
+}
+
+/// What [`Db::finish_download`] did.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Finish {
+    /// `replaced`: the file it replaces, to delete (an audio-only download
+    /// that now has the picture too).
+    Done { replaced: Option<String> },
+    /// The download was removed meanwhile.
+    Gone,
+}
+
+/// A video smart downloads might fetch, in priority order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Candidate {
+    pub id: String,
+    pub duration_secs: u32,
+}
+
+/// How many of each kind of candidate smart downloads consider.
+#[derive(Clone, Copy, Debug)]
+pub struct CandidateLimits {
+    pub in_progress: u32,
+    pub subscriptions: u32,
+    pub for_you: u32,
+    /// Subscription uploads older than this are left out.
+    pub max_age_days: u32,
 }
 
 /// A video awaiting a Shorts verdict.
@@ -55,11 +144,23 @@ pub struct FeedQuery {
     pub hide_watched: bool,
 }
 
-/// The `VideoRow` columns of `videos v`, in [`video_row`]'s order.
+/// The `VideoRow` columns of `videos v` (joined with [`DOWNLOADS_JOIN`]),
+/// in [`video_row`]'s order.
 const VIDEO_COLUMNS: &str = "v.id, v.title, v.channel_title, v.published, v.duration_secs, v.live,
     v.watched_at IS NOT NULL,
     CASE WHEN v.duration_secs > 0 THEN min(v.resume_secs / v.duration_secs, 1.0) END,
-    nullif(max(coalesce(v.played_at, 0), coalesce(v.watched_at, 0)), 0)";
+    nullif(max(coalesce(v.played_at, 0), coalesce(v.watched_at, 0)), 0),
+    CASE WHEN d.state = 1 THEN CASE WHEN d.smart THEN 4 ELSE 3 END
+         WHEN d.smart = 0 AND d.state = 0 THEN 1
+         WHEN d.smart = 0 AND d.state = 2 THEN 2
+         ELSE 0 END";
+
+/// Every query listing [`VIDEO_COLUMNS`] needs this after `videos v`.
+const DOWNLOADS_JOIN: &str = "LEFT JOIN downloads d ON d.video_id = v.id";
+
+/// The [`DownloadRow`] columns after [`VIDEO_COLUMNS`].
+const DOWNLOAD_COLUMNS: &str = "d.smart, d.state, d.audio_only, d.max_height, d.bytes, d.file,
+    d.streams, d.requested_at, d.completed_at, d.attempts, d.error";
 
 fn video_row(r: &rusqlite::Row) -> rusqlite::Result<VideoRow> {
     Ok(VideoRow {
@@ -72,6 +173,30 @@ fn video_row(r: &rusqlite::Row) -> rusqlite::Result<VideoRow> {
         watched: r.get(6)?,
         progress: r.get(7)?,
         last_played: r.get(8)?,
+        offline: match r.get::<_, i64>(9)? {
+            1 => Offline::Queued,
+            2 => Offline::Failed,
+            3 => Offline::Saved,
+            4 => Offline::Smart,
+            _ => Offline::No,
+        },
+    })
+}
+
+fn download_row(r: &rusqlite::Row) -> rusqlite::Result<DownloadRow> {
+    Ok(DownloadRow {
+        video: video_row(r)?,
+        smart: r.get(10)?,
+        state: DownloadState::from_db(r.get(11)?),
+        audio_only: r.get(12)?,
+        max_height: r.get(13)?,
+        bytes: r.get::<_, i64>(14)?.max(0) as u64,
+        file: r.get(15)?,
+        streams: r.get(16)?,
+        requested_at: r.get(17)?,
+        completed_at: r.get(18)?,
+        attempts: r.get(19)?,
+        error: r.get(20)?,
     })
 }
 
@@ -111,6 +236,23 @@ CREATE TABLE IF NOT EXISTS feed_items (
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+-- Videos downloaded for offline playback (see DownloadRow), and ones the
+-- user removed (state 3), which smart downloads leave alone.
+CREATE TABLE IF NOT EXISTS downloads (
+    video_id     TEXT PRIMARY KEY,
+    smart        INTEGER NOT NULL,
+    state        INTEGER NOT NULL,
+    audio_only   INTEGER NOT NULL,
+    max_height   INTEGER NOT NULL,
+    bytes        INTEGER NOT NULL DEFAULT 0,
+    file         TEXT,
+    streams      TEXT,
+    requested_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    error        TEXT
 );
 "#;
 
@@ -388,7 +530,7 @@ impl Db {
         self.with(|c| {
             let mut stmt = c.prepare_cached(&format!(
                 "SELECT {VIDEO_COLUMNS}
-                 FROM feed_items f JOIN videos v ON v.id = f.video_id
+                 FROM feed_items f JOIN videos v ON v.id = f.video_id {DOWNLOADS_JOIN}
                  WHERE f.source = ?1 AND v.short = 0
                    AND (f.position IS NOT NULL OR v.published >= ?2)
                    AND (?3 = 0 OR v.watched_at IS NULL)
@@ -407,7 +549,7 @@ impl Db {
     pub fn history(&self, limit: u32) -> Result<Vec<VideoRow>> {
         self.with(|c| {
             let mut stmt = c.prepare_cached(&format!(
-                "SELECT {VIDEO_COLUMNS} FROM videos v
+                "SELECT {VIDEO_COLUMNS} FROM videos v {DOWNLOADS_JOIN}
                  WHERE v.played_at IS NOT NULL OR v.watched_at IS NOT NULL
                  ORDER BY max(coalesce(v.played_at, 0), coalesce(v.watched_at, 0)) DESC
                  LIMIT ?1"
@@ -440,7 +582,34 @@ impl Db {
         })
     }
 
-    /// Most recently played or watched video ids (seeds for For you).
+    /// What you played or marked watched, most recent first: what For you
+    /// learns your taste from.
+    pub fn watch_history(&self, limit: u32) -> Result<Vec<Watched>> {
+        self.with(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT id, channel_id, channel_title,
+                        max(coalesce(played_at, 0), coalesce(watched_at, 0)),
+                        played_at IS NOT NULL, watched_at IS NOT NULL, resume_secs, duration_secs
+                 FROM videos WHERE played_at IS NOT NULL OR watched_at IS NOT NULL
+                 ORDER BY max(coalesce(played_at, 0), coalesce(watched_at, 0)) DESC LIMIT ?1",
+            )?;
+            stmt.query_map([limit], |r| {
+                Ok(Watched {
+                    id: r.get(0)?,
+                    channel_id: r.get(1)?,
+                    channel_title: r.get(2)?,
+                    at: r.get(3)?,
+                    played: r.get(4)?,
+                    finished: r.get(5)?,
+                    resume_secs: r.get(6)?,
+                    duration_secs: r.get(7)?,
+                })
+            })?
+            .collect()
+        })
+    }
+
+    /// Most recently played or watched video ids.
     pub fn recently_played(&self, limit: u32) -> Result<Vec<String>> {
         self.with(|c| {
             let mut stmt = c.prepare_cached(
@@ -539,20 +708,268 @@ impl Db {
     }
 
     /// Deletes videos first seen more than `older_than_days` ago that no feed
-    /// lists any more and that have no history (old Search, Explore and For
-    /// you results). Without this the table only grows. Returns how many.
+    /// lists any more and that have no history or download (old Search,
+    /// Explore and For you results). Without this the table only grows.
+    /// Returns how many.
     pub fn prune(&self, older_than_days: u32) -> Result<usize> {
         let cutoff = Utc::now().timestamp() - i64::from(older_than_days) * 86_400;
         self.with(|c| {
             // `NOT IN` builds the set of listed ids once; a correlated
             // `NOT EXISTS` couldn't use feed_items' (source, video_id) key.
-            c.execute(
+            let pruned = c.execute(
                 "DELETE FROM videos
                  WHERE first_seen < ?1
                    AND played_at IS NULL AND watched_at IS NULL AND resume_secs IS NULL
-                   AND id NOT IN (SELECT video_id FROM feed_items)",
+                   AND id NOT IN (SELECT video_id FROM feed_items)
+                   AND id NOT IN (SELECT video_id FROM downloads WHERE state != 3)",
                 [cutoff],
+            )?;
+            // Removed downloads of videos that are gone.
+            c.execute(
+                "DELETE FROM downloads WHERE state = 3 AND video_id NOT IN (SELECT id FROM videos)",
+                [],
+            )?;
+            Ok(pruned)
+        })
+    }
+
+    // Downloads
+
+    /// Asks for a download. The user's (`smart` false) are queued even if
+    /// a smart download has it already (it's kept from then on, and fetched
+    /// again only to add the picture to an audio-only one) or the user
+    /// removed it before. Smart downloads only queue videos with no download
+    /// row at all. Returns whether anything is left to download.
+    pub fn request_download(
+        &self,
+        id: &str,
+        smart: bool,
+        audio_only: bool,
+        max_height: u32,
+    ) -> Result<bool> {
+        let now = Utc::now().timestamp();
+        self.with(|c| {
+            let tx = c.transaction()?;
+            let existing: Option<(i64, bool)> = tx
+                .query_row(
+                    "SELECT state, audio_only FROM downloads WHERE video_id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let queue = match existing {
+                None => {
+                    tx.execute(
+                        "INSERT INTO downloads(video_id, smart, state, audio_only, max_height, requested_at)
+                         VALUES (?1, ?2, 0, ?3, ?4, ?5)",
+                        params![id, smart, audio_only, max_height, now],
+                    )?;
+                    true
+                }
+                Some(_) if smart => false,
+                Some((state, had_audio_only)) => {
+                    let done = DownloadState::from_db(state) == DownloadState::Done;
+                    if done && (audio_only || !had_audio_only) {
+                        tx.execute("UPDATE downloads SET smart = 0 WHERE video_id = ?1", [id])?;
+                        false
+                    } else {
+                        // `bytes` and `file` keep describing what's on disk
+                        // until the new download replaces it.
+                        tx.execute(
+                            "UPDATE downloads SET smart = 0, state = 0, audio_only = ?2,
+                                max_height = ?3, requested_at = ?4, attempts = 0, error = NULL
+                             WHERE video_id = ?1",
+                            params![id, audio_only, max_height, now],
+                        )?;
+                        true
+                    }
+                }
+            };
+            tx.commit()?;
+            Ok(queue)
+        })
+    }
+
+    /// Downloads and removed downloads alike, with their videos.
+    fn download_rows(
+        &self,
+        filter: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<DownloadRow>> {
+        self.with(|c| {
+            let mut stmt = c.prepare_cached(&format!(
+                "SELECT {VIDEO_COLUMNS}, {DOWNLOAD_COLUMNS}
+                 FROM downloads d JOIN videos v ON v.id = d.video_id
+                 WHERE {filter}"
+            ))?;
+            stmt.query_map(params, download_row)?.collect()
+        })
+    }
+
+    /// Every download that isn't removed: waiting ones in the order they
+    /// were asked for, then failed ones, then finished ones, newest first.
+    pub fn downloads(&self) -> Result<Vec<DownloadRow>> {
+        self.download_rows(
+            "d.state != 3 ORDER BY CASE d.state WHEN 0 THEN 0 WHEN 2 THEN 1 ELSE 2 END,
+                CASE WHEN d.state = 1 THEN -d.completed_at ELSE d.requested_at END",
+            [],
+        )
+    }
+
+    pub fn download(&self, id: &str) -> Result<Option<DownloadRow>> {
+        Ok(self.download_rows("d.video_id = ?1", [id])?.pop())
+    }
+
+    /// The oldest waiting download the user asked for.
+    pub fn next_saved_download(&self) -> Result<Option<DownloadRow>> {
+        Ok(self
+            .download_rows(
+                "d.smart = 0 AND d.state = 0 ORDER BY d.requested_at LIMIT 1",
+                [],
+            )?
+            .pop())
+    }
+
+    /// Downloads the user asked for that are waiting.
+    pub fn saved_downloads_waiting(&self) -> Result<u32> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT count(*) FROM downloads WHERE smart = 0 AND state = 0",
+                [],
+                |r| r.get(0),
             )
+        })
+    }
+
+    pub fn set_download_streams(&self, id: &str, streams: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE downloads SET streams = ?2 WHERE video_id = ?1",
+                params![id, streams],
+            )
+            .map(drop)
+        })
+    }
+
+    /// Marks a queued download done, unless it was removed meanwhile.
+    pub fn finish_download(&self, id: &str, file: &str, bytes: u64) -> Result<Finish> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            let Some(old) = tx
+                .query_row(
+                    "SELECT file FROM downloads WHERE video_id = ?1 AND state = 0",
+                    [id],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()?
+            else {
+                return Ok(Finish::Gone);
+            };
+            tx.execute(
+                "UPDATE downloads SET state = 1, file = ?2, bytes = ?3, completed_at = ?4,
+                    streams = NULL, error = NULL
+                 WHERE video_id = ?1",
+                params![id, file, bytes as i64, Utc::now().timestamp()],
+            )?;
+            tx.commit()?;
+            Ok(Finish::Done {
+                replaced: old.filter(|f| f != file),
+            })
+        })
+    }
+
+    /// Records a failed attempt. It stays queued for another try unless
+    /// `give_up`.
+    pub fn fail_download(&self, id: &str, error: &str, give_up: bool) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE downloads SET attempts = attempts + 1, error = ?2,
+                    state = CASE WHEN ?3 THEN 2 ELSE state END
+                 WHERE video_id = ?1 AND state = 0",
+                params![id, error, give_up],
+            )
+            .map(drop)
+        })
+    }
+
+    /// The user removed it: forgets the file (returned, to delete) and keeps
+    /// a note so smart downloads don't fetch it again.
+    pub fn remove_download(&self, id: &str) -> Result<Option<String>> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            let file: Option<String> = tx
+                .query_row("SELECT file FROM downloads WHERE video_id = ?1", [id], |r| r.get(0))
+                .optional()?
+                .flatten();
+            tx.execute(
+                "UPDATE downloads SET state = 3, file = NULL, bytes = 0, streams = NULL, error = NULL
+                 WHERE video_id = ?1",
+                [id],
+            )?;
+            tx.commit()?;
+            Ok(file)
+        })
+    }
+
+    /// Drops the row entirely (an evicted smart download, which may be
+    /// downloaded again later).
+    pub fn forget_download(&self, id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute("DELETE FROM downloads WHERE video_id = ?1", [id])
+                .map(drop)
+        })
+    }
+
+    /// What smart downloads should hold, most wanted first: videos you
+    /// stopped partway, then unwatched subscription uploads (newest first),
+    /// then For you in its order. Live streams, Shorts, videos without a
+    /// duration and ones whose download was removed or failed are left out.
+    pub fn smart_candidates(&self, limits: CandidateLimits) -> Result<Vec<Candidate>> {
+        let cutoff = Utc::now().timestamp() - i64::from(limits.max_age_days) * 86_400;
+        const USABLE: &str = "v.short = 0 AND v.live = 0 AND v.duration_secs > 0
+            AND v.watched_at IS NULL
+            AND v.id NOT IN (SELECT video_id FROM downloads WHERE state IN (2, 3))";
+        self.with(|c| {
+            let candidate = |r: &rusqlite::Row| {
+                Ok(Candidate {
+                    id: r.get(0)?,
+                    duration_secs: r.get(1)?,
+                })
+            };
+            let mut out: Vec<Candidate> = c
+                .prepare_cached(&format!(
+                    "SELECT v.id, v.duration_secs FROM videos v
+                     WHERE v.resume_secs IS NOT NULL AND {USABLE}
+                     ORDER BY v.played_at DESC LIMIT ?1"
+                ))?
+                .query_map([limits.in_progress], candidate)?
+                .collect::<rusqlite::Result<_>>()?;
+            // Played for a few seconds and left: not interested.
+            let subscriptions = c
+                .prepare_cached(&format!(
+                    "SELECT v.id, v.duration_secs FROM feed_items f JOIN videos v ON v.id = f.video_id
+                     WHERE f.source = ?1 AND v.played_at IS NULL AND v.published >= ?2 AND {USABLE}
+                     ORDER BY v.published DESC LIMIT ?3"
+                ))?
+                .query_map(
+                    params![FeedKind::Subscriptions.as_str(), cutoff, limits.subscriptions],
+                    candidate,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let for_you = c
+                .prepare_cached(&format!(
+                    "SELECT v.id, v.duration_secs FROM feed_items f JOIN videos v ON v.id = f.video_id
+                     WHERE f.source = ?1 AND v.played_at IS NULL AND {USABLE}
+                     ORDER BY f.position ASC NULLS LAST, v.published DESC LIMIT ?2"
+                ))?
+                .query_map(params![FeedKind::Home.as_str(), limits.for_you], candidate)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for c in subscriptions.into_iter().chain(for_you) {
+                if !out.iter().any(|o| o.id == c.id) {
+                    out.push(c);
+                }
+            }
+            Ok(out)
         })
     }
 
@@ -873,6 +1290,22 @@ mod tests {
         let history = db.history(10).unwrap();
         let ids: Vec<_> = history.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(ids, ["b", "a"]);
+        // What For you learns from: marked watched, and played partway.
+        let taste = db.watch_history(10).unwrap();
+        assert_eq!(taste.len(), 2);
+        assert_eq!(
+            (taste[0].id.as_str(), taste[0].played, taste[0].finished),
+            ("b", false, true)
+        );
+        assert_eq!(
+            (taste[1].id.as_str(), taste[1].played, taste[1].finished),
+            ("a", true, false)
+        );
+        assert_eq!(
+            (taste[1].resume_secs, taste[1].duration_secs),
+            (Some(150.0), Some(600))
+        );
+        assert_eq!(taste[1].channel_id, "UC1");
         assert!(history[0].watched);
         assert_eq!(history[1].progress, Some(0.25));
         assert!(history[1].last_played.is_some());
@@ -906,7 +1339,7 @@ mod tests {
     fn history_queries_use_the_history_index() {
         let db = progress_db();
         let history = format!(
-            "SELECT {VIDEO_COLUMNS} FROM videos v
+            "SELECT {VIDEO_COLUMNS} FROM videos v {DOWNLOADS_JOIN}
              WHERE v.played_at IS NOT NULL OR v.watched_at IS NOT NULL
              ORDER BY max(coalesce(v.played_at, 0), coalesce(v.watched_at, 0)) DESC LIMIT 10"
         );
@@ -963,6 +1396,33 @@ mod tests {
             .unwrap();
         // Still listed ("a", "live" in Subscriptions, "new" in Search) or in History.
         assert_eq!(ids, ["a", "live", "new", "played", "resumed"]);
+        // Nor are downloaded ones; removed downloads of pruned videos go.
+        db.upsert_items(
+            FeedKind::Search,
+            &[
+                item("kept", "UC1", LinkHint::WatchLink, 1),
+                item("gone", "UC1", LinkHint::WatchLink, 1),
+            ],
+            &Retain::OnlyFetched,
+        )
+        .unwrap();
+        db.request_download("kept", false, false, 720).unwrap();
+        db.request_download("gone", false, false, 720).unwrap();
+        db.remove_download("gone").unwrap();
+        db.upsert_items(FeedKind::Search, &[], &Retain::OnlyFetched)
+            .unwrap();
+        db.with(|c| c.execute("UPDATE videos SET first_seen = first_seen - 60 * 86400", []))
+            .unwrap();
+        assert_eq!(db.prune(30).unwrap(), 2, "new and gone");
+        assert!(db.download("kept").unwrap().is_some());
+        let tombstones: i64 = db
+            .with(|c| {
+                c.query_row("SELECT count(*) FROM downloads WHERE state = 3", [], |r| {
+                    r.get(0)
+                })
+            })
+            .unwrap();
+        assert_eq!(tombstones, 0);
         // Nothing is old enough at 90 days.
         db.upsert_items(FeedKind::Search, &[], &Retain::OnlyFetched)
             .unwrap();

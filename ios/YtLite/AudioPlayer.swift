@@ -3,9 +3,10 @@ import Observation
 import SwiftUI
 import UIKit
 
-/// Audio-only playback (podcast mode): the HLS audio-only rendition, no
-/// video decoding, keeps playing with the screen off. Shown as a mini player
-/// on the phone and as Now Playing in CarPlay.
+/// Audio-only playback (podcast mode): the HLS audio-only rendition, or a
+/// download with its picture turned off, so no video is decoded. Keeps
+/// playing with the screen off. Shown as a mini player on the phone and as
+/// Now Playing in CarPlay.
 @Observable
 @MainActor
 final class AudioPlayer {
@@ -19,6 +20,7 @@ final class AudioPlayer {
     @ObservationIgnored private var player: AVPlayer?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var rateObserver: NSKeyValueObservation?
+    @ObservationIgnored private var tracksObserver: NSKeyValueObservation?
 
     init() {
         // The mini player's clock only runs while someone can see it, not for
@@ -43,6 +45,12 @@ final class AudioPlayer {
         // Only matters if the core had to return the master playlist (no
         // audio-only rendition): take its smallest variant.
         item.preferredPeakBitRate = 1
+        if url.isFileURL {
+            // A downloaded video: just its sound.
+            tracksObserver = item.observe(\.tracks, options: [.initial]) { item, _ in
+                DispatchQueue.main.async { item.setVideoEnabled(false) }
+            }
+        }
         let player = AVPlayer(playerItem: item)
         player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         if start > 0 {
@@ -81,6 +89,7 @@ final class AudioPlayer {
         if let player { PlaybackProgress.shared.detach(player) }
         stopClock()
         rateObserver = nil
+        tracksObserver = nil
         player?.pause()
         if player != nil { NowPlaying.shared.detach() }
         player = nil

@@ -19,14 +19,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import local.ytlite.BuildConfig
+import local.ytlite.downloads.Downloads
 import local.ytlite.playback.PlayerConnection
+import uniffi.yt_lite_ffi.Download
+import uniffi.yt_lite_ffi.DownloadListener
+import uniffi.yt_lite_ffi.DownloadProgress
 import uniffi.yt_lite_ffi.Feed
 import uniffi.yt_lite_ffi.FfiException
+import uniffi.yt_lite_ffi.OfflineStorage
 import uniffi.yt_lite_ffi.Playable
 import uniffi.yt_lite_ffi.SignIn
 import uniffi.yt_lite_ffi.Video
@@ -84,6 +91,18 @@ class AppModel(private val app: Application) {
     /** The UI's connection to PlaybackService (created on first use). */
     val player: PlayerConnection by lazy { PlayerConnection(app) { _messages.tryEmit(it) } }
 
+    /** Bumped when downloads come, go, finish or fail (not on progress). */
+    private val _downloadsVersion = MutableStateFlow(0)
+    val downloadsVersion = _downloadsVersion.asStateFlow()
+
+    /** The download in progress. */
+    private val _downloadProgress = MutableStateFlow<DownloadProgress?>(null)
+    val downloadProgress = _downloadProgress.asStateFlow()
+
+    /** A download was asked for: the UI asks to show its notification. */
+    private val _downloadRequested = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val downloadRequested = _downloadRequested.asSharedFlow()
+
     /** When each feed was last refreshed from YouTube (elapsed realtime, ms). */
     private val refreshedAt = java.util.concurrent.ConcurrentHashMap<Feed, Long>()
 
@@ -100,6 +119,26 @@ class AppModel(private val app: Application) {
         this.core = core
         startupError = error
         scope.launch { checkSignIn() }
+        core?.setDownloadListener(object : DownloadListener {
+            override fun downloadsChanged(progressOnly: Boolean) {
+                scope.launch {
+                    _downloadProgress.value = io { core.downloadProgress() }
+                    if (!progressOnly) {
+                        _downloadsVersion.update { it + 1 }
+                        // Cards show what's downloaded.
+                        _libraryVersion.update { it + 1 }
+                    }
+                }
+            }
+        })
+        // Smart downloads follow the setting; WorkManager keeps the schedule.
+        scope.launch {
+            settingsStore.settings.map { it.smartDownloads }.distinctUntilChanged().collect { enabled ->
+                Downloads.scheduleSmart(app, enabled)
+                if (!enabled && core != null) runCatching { io { core.clearSmartDownloads() } }
+            }
+        }
+        scope.launch { resumeDownloads() }
     }
 
     val hasGoogleClient: Boolean get() = core?.hasGoogleClient() ?: false
@@ -112,6 +151,9 @@ class AppModel(private val app: Application) {
     fun updateSettings(change: (Settings) -> Settings) {
         scope.launch { settingsStore.update(change) }
     }
+
+    /** The settings as stored (`settings` starts with the defaults until they load). */
+    suspend fun storedSettings(): Settings = settingsStore.settings.first()
 
     suspend fun checkSignIn() {
         val core = core ?: return
@@ -230,6 +272,51 @@ class AppModel(private val app: Application) {
                 .onFailure { Log.w(TAG, "saving progress of $videoId", it) }
             if (refresh) _libraryVersion.update { it + 1 }
         }
+    }
+
+    // Downloads
+
+    /** Downloads `video` (at the download quality) to keep offline. */
+    fun download(video: Video, audioOnly: Boolean = false) {
+        val core = core ?: return
+        scope.launch {
+            try {
+                io { core.download(video.id, settings.value.downloadQuality.toUInt(), audioOnly) }
+                _downloadRequested.tryEmit(Unit)
+                Downloads.runSaved(app)
+            } catch (e: Exception) {
+                _messages.tryEmit(describe(e))
+            }
+        }
+    }
+
+    /** Keeps a smart download from being replaced. (Asking for the sound
+     *  only keeps whatever it has rather than fetching the picture too.) */
+    fun keepDownload(video: Video) = download(video, audioOnly = true)
+
+    /** Deletes a download or cancels it. */
+    fun removeDownload(video: Video) {
+        val core = core ?: return
+        scope.launch {
+            runCatching { io { core.removeDownload(video.id) } }
+                .onFailure { _messages.tryEmit(describe(it)) }
+        }
+    }
+
+    suspend fun downloads(): List<Download> = core?.let { core -> io { core.downloads() } } ?: emptyList()
+
+    suspend fun offlineStorage(): OfflineStorage? =
+        core?.let { core -> runCatching { io { core.offlineStorage() } }.getOrNull() }
+
+    /** Settings' "Update now": smart downloads at once, on Wi-Fi. */
+    fun updateSmartNow() {
+        if (!Downloads.updateSmartNow(app)) _messages.tryEmit("Connect to Wi-Fi to update smart downloads.")
+    }
+
+    /** Continues downloads you asked for that a stopped run left waiting. */
+    private suspend fun resumeDownloads() {
+        val core = core ?: return
+        if (runCatching { io { core.downloadsWaiting() } }.getOrDefault(0u) > 0u) Downloads.runSaved(app)
     }
 
     // Account

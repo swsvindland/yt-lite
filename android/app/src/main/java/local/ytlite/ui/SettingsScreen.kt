@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,6 +39,9 @@ import local.ytlite.core.AppModel
 import local.ytlite.core.Settings
 
 private val qualities = listOf(720 to "720p", 1080 to "1080p", 1440 to "1440p", 2160 to "4K")
+/** H.264, which downloads are, tops out at 1080p. */
+private val downloadQualities = listOf(360 to "360p", 480 to "480p", 720 to "720p", 1080 to "1080p")
+private val smartSizes = listOf(1, 2, 5, 10, 20)
 
 /** Opened from You (the gear); back returns there. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -136,6 +140,39 @@ fun SettingsScreen(model: AppModel, onBack: () -> Unit) {
                 }
             }
 
+            item { Section("Downloads") }
+            item {
+                Choice("Download quality", downloadQualities, settings.downloadQuality) { height ->
+                    update { it.copy(downloadQuality = height) }
+                }
+            }
+            item {
+                SwitchItem(
+                    "Smart downloads",
+                    "Keeps your newest subscription videos, then For you, ready to watch offline. They " +
+                        "download while your phone charges on Wi-Fi and are replaced once you've watched " +
+                        "them. With Audio only on, they save just the sound.",
+                    settings.smartDownloads,
+                ) { on -> update { it.copy(smartDownloads = on) } }
+            }
+            if (settings.smartDownloads) {
+                item {
+                    Choice(
+                        "Storage for smart downloads",
+                        smartSizes.map { it to "$it GB" },
+                        settings.smartGigabytes,
+                    ) { gb -> update { it.copy(smartGigabytes = gb) } }
+                }
+                item {
+                    ListItem(
+                        headlineContent = { Text("Update smart downloads now") },
+                        supportingContent = { Text("On Wi-Fi, without waiting for the charger.") },
+                        leadingContent = { Icon(Icons.Outlined.Sync, null) },
+                        modifier = Modifier.clickable { model.updateSmartNow() },
+                    )
+                }
+            }
+
             if (Build.VERSION.SDK_INT >= 31) {
                 item { Section("Appearance") }
                 item {
@@ -177,12 +214,32 @@ fun SettingsScreen(model: AppModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun Section(title: String) {
+internal fun Section(title: String) {
     Text(
         title,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 4.dp),
+    )
+}
+
+/** A setting with a few options, as segmented buttons. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun <T> Choice(title: String, options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
+    ListItem(
+        headlineContent = { Text(title) },
+        supportingContent = {
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                options.forEachIndexed { index, (value, label) ->
+                    SegmentedButton(
+                        selected = selected == value,
+                        onClick = { onSelect(value) },
+                        shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                    ) { Text(label) }
+                }
+            }
+        },
     )
 }
 

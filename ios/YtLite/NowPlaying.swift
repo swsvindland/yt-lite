@@ -65,9 +65,14 @@ final class NowPlaying {
     }
 
     private func loadArtwork(for video: Video) async {
-        guard let url = URL(string: "https://i.ytimg.com/vi/\(video.id)/hqdefault.jpg"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
-              let image = UIImage(data: data) else { return }
+        var image: UIImage?
+        if let url = URL(string: "https://i.ytimg.com/vi/\(video.id)/hqdefault.jpg"),
+           let (data, _) = try? await URLSession.shared.data(from: url) {
+            image = UIImage(data: data)
+        }
+        // Offline (playing a download): the list's thumbnail is likely cached.
+        if image == nil { image = await ThumbnailCache.shared.image(for: video.thumbnailURL) }
+        guard let image else { return }
         info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         publish()
     }

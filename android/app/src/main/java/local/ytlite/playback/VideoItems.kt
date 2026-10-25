@@ -46,18 +46,21 @@ object VideoItems {
             .setMediaMetadata(metadata(video, audioOnly = true))
             .build()
 
-    /** A video with its resolved stream (HLS). */
+    /** A video with its resolved stream (HLS), or its downloaded file. */
     fun playable(video: Video, playable: Playable): MediaItem =
         MediaItem.Builder()
             .setMediaId(video.id)
             .setUri(playable.url)
-            .setMimeType(MimeTypes.APPLICATION_M3U8)
+            .setMimeType(mimeType(Uri.parse(playable.url)))
             .setMediaMetadata(metadata(video, playable.audioOnly))
             // Passed on to PlaybackService even where the URI itself isn't.
             .setRequestMetadata(
                 MediaItem.RequestMetadata.Builder().setMediaUri(Uri.parse(playable.url)).build()
             )
             .build()
+
+    /** HLS for streams; a download's type comes from its extension (MP4, M4A). */
+    fun mimeType(uri: Uri): String? = if (uri.scheme == "file") null else MimeTypes.APPLICATION_M3U8
 
     fun isAudioOnly(item: MediaItem?): Boolean =
         item?.mediaMetadata?.extras?.getBoolean(EXTRA_AUDIO_ONLY, true) ?: true

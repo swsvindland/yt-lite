@@ -1,5 +1,10 @@
 package local.ytlite.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,14 +12,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Subscriptions
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Subscriptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,7 +42,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.core.layout.WindowSizeClass
 import local.ytlite.core.AppModel
@@ -56,8 +63,9 @@ enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: Image
 @Composable
 fun App(model: AppModel) {
     var tab by rememberSaveable { mutableStateOf(Tab.Subscriptions) }
-    /** Settings, opened from You. */
+    /** Settings and Downloads, opened from You. */
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var downloadsOpen by rememberSaveable { mutableStateOf(false) }
     fun openSettings() {
         tab = Tab.You
         settingsOpen = true
@@ -70,6 +78,20 @@ fun App(model: AppModel) {
     LaunchedEffect(model) {
         model.startupError?.let { snackbar.showSnackbar(it) }
         model.messages.collect { snackbar.showSnackbar(it) }
+    }
+
+    // Downloads show their progress in a notification (Android 13+ asks first).
+    val context = LocalContext.current
+    val askToNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(model) {
+        model.downloadRequested.collect {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                askToNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
     }
 
     // A rail when the window is wide, or too short to give up height to a bar.
@@ -104,10 +126,10 @@ fun App(model: AppModel) {
                         Tab.ForYou -> FeedScreen(model, Feed.FOR_YOU, "For you", ::openSettings)
                         Tab.Explore -> ExploreScreen(model)
                         Tab.Search -> SearchScreen(model)
-                        Tab.You -> if (settingsOpen) {
-                            SettingsScreen(model) { settingsOpen = false }
-                        } else {
-                            YouScreen(model, ::openSettings)
+                        Tab.You -> when {
+                            settingsOpen -> SettingsScreen(model) { settingsOpen = false }
+                            downloadsOpen -> DownloadsScreen(model) { downloadsOpen = false }
+                            else -> YouScreen(model, ::openSettings) { downloadsOpen = true }
                         }
                     }
                 }

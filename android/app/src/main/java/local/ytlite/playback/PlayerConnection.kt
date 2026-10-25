@@ -102,6 +102,8 @@ class PlayerConnection(context: Context, private val onError: (String) -> Unit) 
     }
 
     fun onAppVisible() {
+        // An audio-only download keeps its picture off.
+        if (_nowPlaying.value?.audioOnly == true) return
         _controller.value?.let { setVideoTrack(it, enabled = true) }
     }
 

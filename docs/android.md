@@ -3,7 +3,10 @@
 Status: **built and running in the emulator** (2026-10-09, Android 16). Explore, playback (video,
 audio only, background, Picture in Picture), progress and the Android Auto browse tree were checked
 there; sign-in got as far as Google's page. Running on a phone, signing in, and Android Auto in a
-real car haven't been tried yet.
+real car haven't been tried yet. Downloads (2026-10-25) were checked in the emulator: downloading
+with the progress notification, playing a download as video and audio with the network off, smart
+downloads (periodic and "Update now", staying within the budget), a download you ask for taking
+over from smart downloads, and turning them off.
 
 ## Run it on your phone
 
@@ -62,6 +65,27 @@ this is a personal sideloaded app.
 - The refresh token is stored encrypted with an **Android Keystore** key (`KeystoreSecretStore`),
   registered with the core as keyring-core's default store. The key works while the phone is
   locked, so Subscriptions refreshes in the car too.
+- **Downloads**: long-press a video → *Download* or *Download audio only*; a badge marks
+  downloaded videos, and You → Downloads lists them with progress and the space they use. See
+  [Downloads](#downloads).
+
+## Downloads
+
+The Rust core downloads and remuxes (see the README's *Downloads*); `downloads/` decides when it
+runs, with WorkManager:
+
+- **Downloads you ask for**: one-off work on any connection, run as a foreground service
+  (`dataSync`) with a progress notification. Android 13+ asks to show notifications at the first
+  download. Stopped work (no connection) continues when the connection is back, and the app
+  restarts waiting downloads when it starts.
+- **Smart downloads** (Settings → Downloads; on by default, 5 GB, 720p): periodic work every 3
+  hours that only runs while the phone is charging on an unmetered network (Wi-Fi) with storage
+  not low, without a notification. WorkManager stops it when the charger or Wi-Fi goes away, and
+  the next run picks up where it left off. *Update smart downloads now* runs it at once on Wi-Fi,
+  with the notification.
+- Downloads live in the app's private storage (`files/yt-lite/data/downloads`). A downloaded
+  video plays from its file with no connection, in Android Auto too; listening to one disables its
+  video track, so no video decoder is created.
 
 ## Android Auto
 
@@ -86,6 +110,7 @@ scripts/build-android.sh        cargo (NDK clang, 16 KB pages) -> jniLibs, uniff
 android/app/src/main/java/local/ytlite/
   YtLiteApplication.kt          registers the secret store, creates the AppModel
   core/                         AppModel (the core, settings, sign-in), Keystore store, formatting
+  downloads/                    DownloadWorker (runs the core's downloads), Downloads (WorkManager)
   playback/                     PlaybackService (ExoPlayer + session + progress), LibraryTree
                                 (Android Auto), ArtworkProvider (content:// thumbnails),
                                 PlayerConnection (the UI's MediaController), VideoItems

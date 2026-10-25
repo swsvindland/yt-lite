@@ -20,6 +20,7 @@ path = "uniffi-bindgen.rs"
 yt-lite-core = { workspace = true, default-features = false }
 anyhow.workspace = true
 log.workspace = true
+url = "2.5"
 uniffi = { version = "0.32", features = ["cli"] }
 # The Android app's secret store plugs into keyring-core (see secret_store.rs).
 keyring-core = "1"

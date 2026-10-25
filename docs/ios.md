@@ -3,7 +3,10 @@
 Status: **built and running in the simulator** (2026-10-08). Explore, Search and playback were
 checked there end to end. Sign-in and running on a real device haven't been tried yet. Audio only
 was reworked to use HLS (2026-10-09; a 3.8-hour video plays and seeks). CarPlay builds and is
-wired up, but hasn't been tried on a CarPlay screen yet.
+wired up, but hasn't been tried on a CarPlay screen yet. Downloads (2026-10-25) were checked in
+the iOS 27 simulator: downloading, playing a download as video and as audio, smart downloads from
+"Update now", and turning them off. The overnight background task hasn't run (the Simulator
+doesn't run `BGProcessingTask`s; see [Downloads](#downloads)).
 
 ## Run it on your iPhone
 
@@ -63,8 +66,39 @@ a loopback port the Rust core listens on, so there's nothing new to set up in Go
 - **Battery:** nothing ticks in the background. The mini player's clock stops, the lists reload
   only while the app is on screen (once on return if anything changed, rather than on every pause
   and progress save), and the lock screen extrapolates the time itself.
+- **Downloads**: long-press a video → *Download* or *Download audio only*; a badge marks
+  downloaded videos, and You → Downloads lists them with progress and the space they use. See
+  [Downloads](#downloads).
 - Data lives in the app container (`Application Support/yt-lite`), and the refresh token in the
   iOS Keychain.
+
+## Downloads
+
+The Rust core downloads and remuxes (see the README's *Downloads*); `Downloads.swift` decides
+when it runs.
+
+- **Downloads you ask for** start right away. On iOS 26 and later they run as a
+  `BGContinuedProcessingTask`, which keeps going after you leave the app and shows its progress in
+  the system UI. On earlier versions they run in the app with the usual few seconds of background
+  time; the rest continues when you come back, or in the background task below.
+- **Smart downloads** (Settings → Downloads; on by default, 5 GB, 720p): a `BGProcessingTask`
+  with `requiresExternalPower` and `requiresNetworkConnectivity`, so iOS runs it while the phone
+  charges, usually overnight. It only fetches on Wi-Fi (`NWPathMonitor`: not expensive, not
+  constrained, so no cellular, hotspot or Low Data Mode) and stops when Wi-Fi or the charger goes
+  away. *Update smart downloads now* runs them at once on Wi-Fi without the charger.
+- The downloads folder (`Application Support/yt-lite/data/downloads`) is excluded from iCloud
+  backups. Downloaded videos play from their file (no connection needed); listening to one turns
+  its video track off, and so does playing one on with the screen off.
+- Info.plist: the `processing` background mode, and `BGTaskSchedulerPermittedIdentifiers` for
+  `<bundle id>.downloads` and `<bundle id>.download.*` (continued-processing tasks get their own
+  identifier each time).
+
+The Simulator refuses `BGProcessingTask` requests. On a device, with the debugger attached and the
+app in the background, start the overnight task with:
+
+```
+e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"local.ytlite.ios.downloads"]
+```
 
 ## Layout
 

@@ -5,6 +5,7 @@
 //! the Phase 2 InnerTube "home" source — can put a Short in front of the UI.
 
 pub mod foryou;
+pub mod interest;
 pub mod pipeline;
 pub mod query;
 pub mod subscriptions;

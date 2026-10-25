@@ -7,7 +7,6 @@ import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -32,6 +31,7 @@ import local.ytlite.R
 import local.ytlite.core.describe
 import local.ytlite.model
 import local.ytlite.ui.MainActivity
+import uniffi.yt_lite_ffi.Offline
 import uniffi.yt_lite_ffi.Video
 
 /**
@@ -87,6 +87,16 @@ class PlaybackService : MediaLibraryService() {
 
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) saveProgress(refresh = true)
+            }
+
+            /** A download has its picture too: off when only the sound is wanted. */
+            override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
+                val audioOnly = VideoItems.isAudioOnly(item)
+                val params = player.trackSelectionParameters
+                if ((C.TRACK_TYPE_VIDEO in params.disabledTrackTypes) != audioOnly) {
+                    player.trackSelectionParameters =
+                        params.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, audioOnly).build()
+                }
             }
         })
         tree = LibraryTree(model) { parentId -> session.notifyChildrenChanged(parentId, Int.MAX_VALUE, null) }
@@ -162,7 +172,7 @@ class PlaybackService : MediaLibraryService() {
     private fun resolve(item: MediaItem): Pair<MediaItem, Long> {
         val uri = item.localConfiguration?.uri ?: item.requestMetadata.mediaUri
         if (uri != null) {
-            return item.buildUpon().setUri(uri).setMimeType(MimeTypes.APPLICATION_M3U8).build() to C.TIME_UNSET
+            return item.buildUpon().setUri(uri).setMimeType(VideoItems.mimeType(uri)).build() to C.TIME_UNSET
         }
         val playable = model.resolveBlocking(item.mediaId, audioOnly = true)
         val video = tree.video(item.mediaId) ?: Video(
@@ -175,6 +185,7 @@ class PlaybackService : MediaLibraryService() {
             watched = false,
             progress = null,
             lastPlayed = null,
+            offline = if (playable.offline) Offline.SAVED else Offline.NO,
         )
         return VideoItems.playable(video, playable) to (playable.startSecs * 1000).toLong()
     }

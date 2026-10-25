@@ -5,6 +5,12 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).downloads</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).download.*</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

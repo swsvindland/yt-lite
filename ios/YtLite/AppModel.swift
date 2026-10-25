@@ -268,6 +268,16 @@ extension Video {
     /// "watched 2 hours ago" (History).
     var watchedText: String? { lastPlayed.map { "watched \(Self.relative($0))" } }
 
+    /// The symbol on a downloaded (or downloading) video's thumbnail.
+    var offlineBadge: String? {
+        switch offline {
+        case .saved, .smart: "arrow.down.circle.fill"
+        case .queued: "arrow.down.circle"
+        case .failed: "exclamationmark.circle"
+        case .no: nil
+        }
+    }
+
     /// One for every card (they're costly to create).
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()

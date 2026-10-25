@@ -38,6 +38,7 @@ struct VideoGrid: View {
                                 systemImage: video.watched ? "eye.slash" : "eye"
                             )
                         }
+                        DownloadActions(video: video)
                         ShareLink(item: URL(string: "https://www.youtube.com/watch?v=\(video.id)")!)
                         if inHistory {
                             Button(role: .destructive) {
@@ -75,6 +76,17 @@ struct VideoCard: View {
                 }
                 if let fraction = video.progress ?? (video.watched ? 1 : nil) {
                     ProgressBar(fraction: fraction)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if let badge = video.offlineBadge {
+                    Image(systemName: badge)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(5)
+                        .background(.black.opacity(0.7), in: Circle())
+                        .padding(8)
+                        .accessibilityLabel(video.offline == .queued ? "Downloading" : "Downloaded")
                 }
             }
             VStack(alignment: .leading, spacing: 3) {
@@ -147,8 +159,13 @@ final class ThumbnailCache: @unchecked Sendable {
     func image(for url: URL?) async -> UIImage? {
         guard let url else { return nil }
         if let hit = cached(url) { return hit }
-        guard let (data, _) = try? await session.data(from: url),
-              let image = await UIImage(data: data)?.byPreparingForDisplay() else { return nil }
+        var data = try? await session.data(from: url).0
+        if data == nil {
+            // Offline, a thumbnail seen before still shows (Downloads).
+            let offline = URLRequest(url: url, cachePolicy: .returnCacheDataDontLoad)
+            data = try? await session.data(for: offline).0
+        }
+        guard let data, let image = await UIImage(data: data)?.byPreparingForDisplay() else { return nil }
         let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? data.count
         images.setObject(image, forKey: url as NSURL, cost: cost)
         return image
@@ -158,6 +175,8 @@ final class ThumbnailCache: @unchecked Sendable {
 /// How much of a video was played, along the bottom of its thumbnail.
 struct ProgressBar: View {
     let fraction: Double
+    /// The thumbnail's.
+    var cornerRadius: CGFloat = 12
 
     var body: some View {
         GeometryReader { geometry in
@@ -167,7 +186,7 @@ struct ProgressBar: View {
             }
         }
         .frame(height: 4)
-        .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 12, bottomTrailingRadius: 12))
+        .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius))
     }
 }
 
@@ -184,5 +203,61 @@ struct EmptyState: View {
             Text(message)
         }
         .padding(.top, 80)
+    }
+}
+
+/// Download, cancel, keep or remove, depending on what's downloaded.
+struct DownloadActions: View {
+    let video: Video
+
+    var body: some View {
+        let downloads = DownloadManager.shared
+        switch video.offline {
+        case .no:
+            Button {
+                downloads.download(video)
+            } label: {
+                Label("Download", systemImage: "arrow.down.circle")
+            }
+            Button {
+                downloads.download(video, audioOnly: true)
+            } label: {
+                Label("Download audio only", systemImage: "arrow.down.circle.dotted")
+            }
+        case .queued:
+            Button(role: .destructive) {
+                downloads.remove(video)
+            } label: {
+                Label("Cancel download", systemImage: "xmark.circle")
+            }
+        case .failed:
+            Button {
+                downloads.download(video)
+            } label: {
+                Label("Try downloading again", systemImage: "arrow.clockwise")
+            }
+            Button(role: .destructive) {
+                downloads.remove(video)
+            } label: {
+                Label("Cancel download", systemImage: "xmark.circle")
+            }
+        case .saved:
+            Button(role: .destructive) {
+                downloads.remove(video)
+            } label: {
+                Label("Delete download", systemImage: "trash")
+            }
+        case .smart:
+            Button {
+                downloads.keep(video)
+            } label: {
+                Label("Keep downloaded", systemImage: "pin")
+            }
+            Button(role: .destructive) {
+                downloads.remove(video)
+            } label: {
+                Label("Delete download", systemImage: "trash")
+            }
+        }
     }
 }

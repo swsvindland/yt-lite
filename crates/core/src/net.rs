@@ -24,6 +24,9 @@ const CONSENT_COOKIE: &str = "SOCS=CAI";
 #[derive(Clone)]
 pub struct Http {
     agent: Agent,
+    /// Media downloads (`get_range`): no overall deadline, since a 10 MiB
+    /// range can take minutes on a slow connection.
+    media: Agent,
 }
 
 impl Default for Http {
@@ -45,7 +48,39 @@ impl Http {
             .max_idle_connections(16)
             .build()
             .into();
-        Self { agent }
+        let media: Agent = Agent::config_builder()
+            .user_agent(USER_AGENT)
+            .http_status_as_error(false)
+            .timeout_connect(Some(Duration::from_secs(15)))
+            .timeout_recv_response(Some(Duration::from_secs(30)))
+            .timeout_recv_body(Some(Duration::from_secs(300)))
+            .build()
+            .into();
+        Self { agent, media }
+    }
+
+    /// Opens bytes `start..=end` of a media URL (googlevideo serves bounded
+    /// ranges at full speed, and throttles open-ended requests). The reader
+    /// may end early if the connection drops.
+    pub fn get_range(
+        &self,
+        url: &str,
+        user_agent: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<impl std::io::Read + 'static> {
+        let resp = self
+            .media
+            .get(url)
+            .header("User-Agent", user_agent)
+            .header("Range", &format!("bytes={start}-{end}"))
+            .call()?;
+        let status = resp.status().as_u16();
+        // A whole file instead of a range is only usable from the start.
+        if status != 206 && !(status == 200 && start == 0) {
+            return Err(HttpStatus(status).into());
+        }
+        Ok(resp.into_body().into_reader())
     }
 
     /// GET a youtube.com page/feed as text.
@@ -151,6 +186,18 @@ impl Http {
         Ok(verdict)
     }
 }
+
+/// A media server answered with this status instead of the content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HttpStatus(pub u16);
+
+impl std::fmt::Display for HttpStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HTTP {}", self.0)
+    }
+}
+
+impl std::error::Error for HttpStatus {}
 
 #[derive(Debug)]
 pub struct ApiError {

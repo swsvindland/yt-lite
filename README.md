@@ -36,6 +36,11 @@ There are phone apps on the same Rust core too:
 - **Android** (Jetpack Compose, Media3, with Android Auto): `scripts/build-android.sh`, then open
   `android/` in Android Studio. See [docs/android.md](docs/android.md).
 
+The phone apps also **download videos for offline playback**: any video on request (or just its
+sound), and **smart downloads**, which keep the newest subscription uploads and then For you
+ready to watch, up to a storage budget (5 GB by default), fetched while the phone charges on
+Wi-Fi and replaced once watched. See [Downloads](#downloads-cratescoresrcoffline).
+
 ---
 
 ## Setup (Windows 11)
@@ -285,14 +290,33 @@ When YouTube breaks it, the fix is usually updating the `VISIONOS` constants in
 Recommendations without signing in to YouTube. Logged out, YouTube's own home feed is empty
 ("Try searching to get started"), so yt-lite builds one:
 
-1. Seeds are the 10 videos you most recently played in yt-lite, topped up with your newest
+1. Seeds are up to 10 videos you recently watched most of in yt-lite, weighted by how recently
+   and how much (ones you left within seconds aren't seeds), topped up with your newest
    subscription uploads until you've played a few.
 2. For each seed, the InnerTube `next` endpoint (WEB client, logged out) returns the related
    videos youtube.com shows next to it.
-3. The lists are interleaved round-robin, so no single seed dominates. Duplicates, the seeds and
-   anything already played are dropped, up to 150 videos.
+3. The candidates are ordered by how likely you are to watch them (`feed/interest.rs`):
+   relevance, added up over every seed that lists a video and weighted by the seed and the
+   position there, times your affinity for the channel, learned from your history (a finished
+   video counts 1, one stopped partway the share you watched, one left within seconds −½, all
+   fading with a 45-day half-life). Smaller factors: subscribed channels, freshness, and a
+   penalty for videos much longer than what you usually watch. Then variety: each further video
+   from a channel already picked counts for less. The seeds and anything already played are
+   dropped, up to 150 videos.
 4. Listings include the duration, so the shared pipeline's Shorts filter rarely needs the Data
    API. Shorts shelves are skipped outright.
+
+Smart downloads fetch For you in this order, after your subscriptions. To see how the ranking
+does on your own history (it learns from all but your last few days and shows where the channels
+and videos you then watched land, next to the old round-robin order):
+
+```sh
+cargo run -p yt-lite-core --example foryou -- <copy of cache.sqlite3> [holdout days]
+```
+
+On one phone's history (288 videos played), the channels watched in the following 3 days filled
+6 of the top 10 instead of 1, and the videos actually watched next moved from positions 46+ to
+1, 2, 3, 5 and 6.
 
 It refreshes when stale (15 min) and whenever you open the tab after playing something.
 
@@ -306,6 +330,50 @@ Trending/Explore pages in 2025; their browse ids now return "invalid argument").
   viewed" searches. Popularity is global, so results skew toward the largest audiences.
 
 Results go through the shared pipeline, so Shorts are filtered the same way as every other feed.
+
+### Downloads (`crates/core/src/offline`)
+
+Shared by the phone apps; the apps only decide *when* downloads run (see
+[docs/ios.md](docs/ios.md#downloads) and [docs/android.md](docs/android.md#downloads)). The desktop
+app doesn't download yet.
+
+- **What's downloaded:** the H.264 video stream (up to the download quality; YouTube offers H.264
+  up to 1080p) and the AAC audio stream from the same `visionos` player response the resolver
+  uses, or just the audio. H.264 because every player decodes it in hardware, and both fit in MP4.
+- **Fetching** (`fetch.rs`): bounded range requests of up to 10 MiB, which googlevideo serves at
+  full speed (about 35 MB/s measured; open-ended requests are throttled). Each stream is appended
+  to a `.part` file, so a download resumes from that file's length after the app was stopped, the
+  network dropped, or Wi-Fi went away. Stream URLs expire after about 6 hours: a refused URL is
+  resolved again and the download carries on from the same byte (the database remembers which
+  streams, `itag:length`, the parts belong to).
+- **Remuxing** (`mux.rs`, no ffmpeg): YouTube's streams are DASH, fragmented MP4 (`moov` without
+  samples, then `moof`+`mdat` pairs). They're rewritten as one ordinary MP4 with the `moov` first:
+  samples are copied untouched, and the fragments' runs become the sample tables (`stts`, `ctts`,
+  `stss`, `stsz`, `stsc`, `stco`/`co64`); the edit list (B-frame delay) is kept. A 10-minute 720p
+  video is 78 MB and remuxes in about 60 ms. AVFoundation and ExoPlayer open, seek and decode
+  every frame of the result; audio-only downloads are `.m4a` files made the same way.
+- **Smart downloads** (`plan.rs`, `Db::smart_candidates`): before each run, Subscriptions and For
+  you are refreshed. Candidates, most wanted first: videos you stopped partway, unwatched
+  subscription uploads (newest first, within `feed.max_age_days`), then For you in its order.
+  Live streams, Shorts and anything played and abandoned are left out. Candidates are downloaded
+  in order while they fit the budget; one bigger than a quarter of the budget is skipped. Watched
+  ones are deleted at the next run. To make room, smart downloads delete what's no longer a
+  candidate (oldest first), then the least wanted, never anything more wanted than the video
+  they're making room for. A smart download that fails is given up on (the next candidate takes
+  its place). With the Audio only setting on, smart downloads save just the sound.
+- **Yours vs smart:** downloads you ask for don't count toward the budget and are never deleted
+  for you (you get three tries before one is marked failed). Keeping a smart download makes it
+  yours. Deleting any download stops smart downloads from fetching that video again.
+- **Space:** smart downloads leave at least 2 GB free on the device, yours 512 MB.
+- **One run at a time:** a run for your downloads makes a smart run stop and takes over; the smart
+  run continues afterwards. Losing the connection ends a run (it resumes later).
+- **Playback:** `play` returns the downloaded file when there is one, so a downloaded video plays
+  with no connection at all (in CarPlay and Android Auto too). Listening to a downloaded video
+  turns its picture track off, so nothing is decoded for it.
+
+```sh
+cargo run -p yt-lite-core --example download -- <video id or URL> [max_height|audio] [out dir]
+```
 
 ### Settings
 
@@ -396,10 +464,13 @@ crates/core/         yt-lite-core: no UI; also builds for iOS (aarch64-apple-ios
   src/shorts.rs        pure Shorts classification
   src/resolve/         native stream resolver (InnerTube player + format selection)
   src/thumbcache.rs    thumbnail disk cache
+  src/offline/         downloads: resumable range fetches, MP4 remuxer, smart-download planning
   src/lru.rs           byte-capped LRU
   src/youtube/         Data API, RSS, durations, URL parsing
-  src/feed/            FeedSource trait, pipeline, subscriptions source
+  src/feed/            FeedSource trait, pipeline, subscriptions and For you sources, interest ranking
   examples/resolve.rs  CLI for the native resolver
+  examples/download.rs downloads and remuxes a video like the phone apps (no database)
+  examples/foryou.rs   For you's ranking against your own history (holdout)
   tests/fixtures/      RSS feeds and player responses captured 2026-10-07 (URLs scrubbed)
 crates/desktop/      yt-lite: GPUI app
   src/main.rs          bootstrap, menus, shortcuts, logging, window

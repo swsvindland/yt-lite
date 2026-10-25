@@ -80,7 +80,8 @@ final class PlayerPresenter: NSObject, AVPlayerViewControllerDelegate {
     /// Detaching the player from the view keeps the audio going (Picture in
     /// Picture handles itself). Nobody sees the picture meanwhile, so the HLS
     /// stream drops to its smallest variant instead of downloading (and
-    /// decoding) 1080p for hours with the screen off.
+    /// decoding) 1080p for hours with the screen off, and a download's
+    /// picture is turned off.
     @objc private func didEnterBackground() {
         guard let controller = current, !inPictureInPicture,
               let player = controller.player, player.rate != 0,
@@ -88,11 +89,13 @@ final class PlayerPresenter: NSObject, AVPlayerViewControllerDelegate {
         backgroundPlayer = player
         controller.player = nil
         player.currentItem?.preferredPeakBitRate = 1
+        player.currentItem?.setVideoEnabled(false)
     }
 
     @objc private func willEnterForeground() {
         guard let player = backgroundPlayer, let controller = current else { return }
         player.currentItem?.preferredPeakBitRate = 0
+        player.currentItem?.setVideoEnabled(true)
         // Without a seek AVPlayer plays out the low-res minutes it buffered first.
         player.seek(to: player.currentTime(), toleranceBefore: .zero, toleranceAfter: .zero)
         controller.player = player
@@ -140,6 +143,16 @@ final class PlayerPresenter: NSObject, AVPlayerViewControllerDelegate {
                 return
             }
             top.present(controller, animated: true) { completionHandler(true) }
+        }
+    }
+}
+
+extension AVPlayerItem {
+    /// Turns a downloaded file's picture on or off (streams have no tracks
+    /// to switch: HLS variants are chosen by bitrate instead).
+    func setVideoEnabled(_ enabled: Bool) {
+        for track in tracks where track.assetTrack?.mediaType == .video {
+            track.isEnabled = enabled
         }
     }
 }

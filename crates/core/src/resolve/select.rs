@@ -118,6 +118,13 @@ pub fn pick_video(formats: &[RawFormat], prefs: &Prefs) -> Option<Stream> {
     let candidates: Vec<&RawFormat> = formats
         .iter()
         .filter(|f| usable(f) && f.mime_type.starts_with("video/"))
+        .filter(|f| {
+            !prefs.only_codecs
+                || prefs
+                    .codecs
+                    .iter()
+                    .any(|c| c == codec_family(&split_mime(&f.mime_type).1))
+        })
         .collect();
     let rank = |f: &RawFormat| {
         let family = codec_family(&split_mime(&f.mime_type).1);
@@ -310,6 +317,17 @@ mod tests {
             ..Prefs::default()
         };
         assert_eq!(pick_video(&formats, &uhd).unwrap().itag, 313);
+
+        // Downloads: H.264 or nothing, never a better-tier VP9.
+        let h264_only = Prefs {
+            max_tier: 2160,
+            codecs: vec!["avc1".into()],
+            only_codecs: true,
+            ..Prefs::default()
+        };
+        assert_eq!(pick_video(&formats, &h264_only).unwrap().itag, 137);
+        let vp9 = &formats[..1];
+        assert!(pick_video(vp9, &h264_only).is_none());
     }
 
     #[test]

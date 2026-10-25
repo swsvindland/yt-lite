@@ -19,6 +19,12 @@ data class Settings(
     val hideWatched: Boolean = false,
     /** Material You colors from the wallpaper instead of yt-lite red. */
     val dynamicColor: Boolean = false,
+    /** Video quality of new downloads (H.264 tops out at 1080p). */
+    val downloadQuality: Int = 720,
+    /** Keep what you're likely to watch next downloaded (on Wi-Fi, while charging). */
+    val smartDownloads: Boolean = true,
+    /** Storage for smart downloads, in GB. */
+    val smartGigabytes: Int = 5,
 )
 
 private val Context.dataStore by preferencesDataStore("settings")
@@ -36,6 +42,9 @@ class SettingsStore(context: Context) {
             p[AUDIO_ONLY] = new.audioOnly
             p[HIDE_WATCHED] = new.hideWatched
             p[DYNAMIC_COLOR] = new.dynamicColor
+            p[DOWNLOAD_QUALITY] = new.downloadQuality
+            p[SMART_DOWNLOADS] = new.smartDownloads
+            p[SMART_GIGABYTES] = new.smartGigabytes
         }
     }
 
@@ -47,6 +56,9 @@ class SettingsStore(context: Context) {
             audioOnly = this[AUDIO_ONLY] ?: defaults.audioOnly,
             hideWatched = this[HIDE_WATCHED] ?: defaults.hideWatched,
             dynamicColor = this[DYNAMIC_COLOR] ?: defaults.dynamicColor,
+            downloadQuality = this[DOWNLOAD_QUALITY] ?: defaults.downloadQuality,
+            smartDownloads = this[SMART_DOWNLOADS] ?: defaults.smartDownloads,
+            smartGigabytes = this[SMART_GIGABYTES] ?: defaults.smartGigabytes,
         )
     }
 
@@ -56,5 +68,8 @@ class SettingsStore(context: Context) {
         val AUDIO_ONLY = booleanPreferencesKey("audioOnly")
         val HIDE_WATCHED = booleanPreferencesKey("hideWatched")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamicColor")
+        val DOWNLOAD_QUALITY = intPreferencesKey("downloadQuality")
+        val SMART_DOWNLOADS = booleanPreferencesKey("smartDownloads")
+        val SMART_GIGABYTES = intPreferencesKey("smartGigabytes")
     }
 }

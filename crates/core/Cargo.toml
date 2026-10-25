@@ -37,6 +37,10 @@ base64 = "0.23"
 getrandom = "0.4"
 open = { version = "5.4", optional = true }
 
+# statvfs: free space before downloading.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # keyring's all-in-one API doesn't set up a store on iOS or Android; there we
 # use keyring-core directly: the data-protection keychain store on iOS, and a
 # store the Android app registers.

@@ -9502,6 +9502,7 @@ dependencies = [
  "getrandom 0.4.3",
  "keyring",
  "keyring-core",
+ "libc",
  "log",
  "open",
  "roxmltree 0.21.1",
@@ -9523,6 +9524,7 @@ dependencies = [
  "keyring-core",
  "log",
  "uniffi",
+ "url",
  "yt-lite-core",
 ]
 

@@ -200,6 +200,12 @@ impl Paths {
         self.cache_dir.join("thumbs")
     }
 
+    /// Videos downloaded for offline playback. Under data, not cache: the
+    /// system mustn't clear what the user asked to keep.
+    pub fn downloads_dir(&self) -> PathBuf {
+        self.data_dir.join("downloads")
+    }
+
     pub fn default_sponsorblock_script(&self) -> PathBuf {
         self.config_dir.join("mpv-scripts").join("sponsorblock.lua")
     }

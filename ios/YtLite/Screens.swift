@@ -193,6 +193,7 @@ struct SearchScreen: View {
 /// Pushed from You (the gear).
 struct SettingsScreen: View {
     @Environment(AppModel.self) private var model
+    @State private var downloads = DownloadManager.shared
 
     var body: some View {
         @Bindable var model = model
@@ -239,6 +240,28 @@ struct SettingsScreen: View {
                 Toggle("Hide watched videos", isOn: $model.hideWatched)
             }
             Section {
+                Picker("Download quality", selection: $downloads.quality) {
+                    Text("360p").tag(360)
+                    Text("480p").tag(480)
+                    Text("720p").tag(720)
+                    Text("1080p").tag(1080)
+                }
+                Toggle("Smart downloads", isOn: $downloads.smartEnabled)
+                if downloads.smartEnabled {
+                    Picker("Storage for smart downloads", selection: $downloads.smartGigabytes) {
+                        ForEach([1, 2, 5, 10, 20], id: \.self) { Text("\($0) GB").tag($0) }
+                    }
+                    Button("Update smart downloads now") {
+                        Task { await downloads.updateSmartNow() }
+                    }
+                    .disabled(downloads.running)
+                }
+            } header: {
+                Text("Downloads")
+            } footer: {
+                Text("Smart downloads keep your newest subscription videos, then For you, ready to watch offline. They download while your iPhone charges on Wi-Fi (usually overnight) and replace videos once you've watched them. With Audio only on, they save just the sound.")
+            }
+            Section {
                 LabeledContent("Shorts", value: "Never shown")
                 LabeledContent("Ads", value: "None")
             } footer: {
@@ -260,6 +283,22 @@ struct YouScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                NavigationLink {
+                    DownloadsScreen()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.down.circle").font(.title3).foregroundStyle(.red)
+                        Text("Downloads").font(.headline)
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                    }
+                    .padding(14)
+                    .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal)
+                .padding(.top, 8)
                 HStack {
                     Text("History").font(.title2.weight(.bold))
                     Spacer()

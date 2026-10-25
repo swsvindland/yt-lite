@@ -37,13 +37,15 @@ a loopback port the Rust core listens on, so there's nothing new to set up in Go
 - **Progress:** videos resume where you stopped them, and count as watched only once they've
   played to the end (within the last 5%, 10 s to 1 min). A red bar on the thumbnail shows how far
   you got. `PlaybackProgress.swift` saves the position on pause, stop and backgrounding, and every
-  10 s; the rules live in `yt-lite-core` (`progress.rs`), shared with the desktop players.
+  30 s; the rules live in `yt-lite-core` (`progress.rs`), shared with the desktop players.
 - Playback: `AVPlayerViewController` presented modally with the resolver's HLS stream. You get
   native controls, Picture in Picture and AirPlay, capped with `preferredMaximumResolution`.
 - **Keep playing in background** (Settings, on by default): when you lock the phone or switch
   apps, video keeps playing as audio. It uses `audiovisualBackgroundPlaybackPolicy` and detaches
-  the player from its view in the background. Lock Screen / Control Center show title, channel
-  and artwork, with play/pause, ±15 s and scrubbing (`NowPlaying.swift`).
+  the player from its view in the background, and drops the stream to its smallest variant
+  (`preferredPeakBitRate`) until you come back, so it isn't downloading 1080p nobody sees. Lock
+  Screen / Control Center show title, channel and artwork, with play/pause, ±15 s and scrubbing
+  (`NowPlaying.swift`, updated on play/pause, seeks and stalls rather than on a timer).
 - **Audio only** (Settings default, or long-press a video → *Listen*): plays the HLS master's
   audio-only rendition (AAC, about 130 kbps instead of several Mbps), with no video decoding. It
   plays in a mini player above the tab bar with the same lock-screen controls. It doesn't use the
@@ -55,7 +57,12 @@ a loopback port the Rust core listens on, so there's nothing new to set up in Go
   History (pick up where you left off).
   Choosing a video plays it audio only and opens the system Now Playing screen (the same
   `NowPlaying` metadata and ±15 s controls). See [CarPlay](#carplay) for the entitlement.
-- Thumbnails load straight from `i.ytimg.com` via `AsyncImage`/`URLCache`.
+- Thumbnails load straight from `i.ytimg.com` through `ThumbnailCache` (`VideoViews.swift`):
+  about 100 decoded images in memory, emptied when the app goes to the background, over a 100 MB
+  disk cache of the JPEGs. Cards that scroll away let go of theirs.
+- **Battery:** nothing ticks in the background. The mini player's clock stops, the lists reload
+  only while the app is on screen (once on return if anything changed, rather than on every pause
+  and progress save), and the lock screen extrapolates the time itself.
 - Data lives in the app container (`Application Support/yt-lite`), and the refresh token in the
   iOS Keychain.
 

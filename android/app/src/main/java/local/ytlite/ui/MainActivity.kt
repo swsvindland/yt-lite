@@ -40,15 +40,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        model.setVisible(true)
         model.player.onAppVisible()
         lifecycleScope.launch { model.checkSignIn() }
     }
 
+    /** Nothing of the app is visible: it was left without Picture in Picture,
+     *  or the screen went off (a Picture in Picture window included, which
+     *  otherwise kept streaming video to a dark screen). */
     override fun onStop() {
         super.onStop()
-        if (!isInPictureInPictureMode) {
-            model.player.onAppHidden(keepPlaying = model.settings.value.backgroundPlayback)
-        }
+        model.setVisible(false)
+        model.player.onAppHidden(keepPlaying = model.settings.value.backgroundPlayback)
     }
 
     fun setVideoShowing(showing: Boolean) {

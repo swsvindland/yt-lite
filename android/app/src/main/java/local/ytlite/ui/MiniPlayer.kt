@@ -31,7 +31,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.C
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
@@ -43,15 +46,19 @@ import local.ytlite.playback.PlayerConnection
 @Composable
 fun MiniPlayer(model: AppModel, now: PlayerConnection.NowPlaying) {
     val controller by model.player.controller.collectAsStateWithLifecycle()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     var position by remember { mutableLongStateOf(0) }
     var duration by remember { mutableLongStateOf(0) }
     LaunchedEffect(controller, now.videoId) {
-        while (true) {
-            controller?.let {
-                position = it.currentPosition
-                duration = it.duration.takeIf { d -> d != C.TIME_UNSET } ?: 0
+        // Only while it's on screen: nothing ticks with the screen off.
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                val c = controller ?: break
+                position = c.currentPosition
+                duration = c.duration.takeIf { it != C.TIME_UNSET } ?: 0
+                // Playing: just after the clock's next second.
+                delay(if (c.isPlaying) 1020 - position % 1000 else 1000)
             }
-            delay(500)
         }
     }
 

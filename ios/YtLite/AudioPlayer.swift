@@ -1,6 +1,7 @@
 import AVFoundation
 import Observation
 import SwiftUI
+import UIKit
 
 /// Audio-only playback (podcast mode): the HLS audio-only rendition, no
 /// video decoding, keeps playing with the screen off. Shown as a mini player
@@ -19,6 +20,22 @@ final class AudioPlayer {
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var rateObserver: NSKeyValueObservation?
 
+    init() {
+        // The mini player's clock only runs while someone can see it, not for
+        // hours of listening with the screen off.
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stopClock() }
+        }
+        center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let player = self.player else { return }
+                self.tick(player.currentTime())
+                self.startClock()
+            }
+        }
+    }
+
     /// `start`: resume point (seconds).
     func play(url: URL, video: Video, start: Double = 0) {
         stop()
@@ -35,23 +52,10 @@ final class AudioPlayer {
         current = video
         elapsed = start
         duration = Double(video.durationSecs ?? 0)
-        timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main
-        ) { [weak self] time in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.elapsed = time.seconds
-                if let d = self.player?.currentItem?.duration.seconds, d.isFinite, d > 0 {
-                    self.duration = d
-                }
-            }
-        }
+        startClock()
         rateObserver = player.observe(\.rate, options: [.new]) { [weak self] player, _ in
             let playing = player.rate != 0
-            Task { @MainActor in
-                self?.isPlaying = playing
-                NowPlaying.shared.publish()
-            }
+            Task { @MainActor in self?.isPlaying = playing }
         }
         try? AVAudioSession.sharedInstance().setActive(true)
         NowPlaying.shared.attach(player: player, video: video)
@@ -66,7 +70,6 @@ final class AudioPlayer {
 
     func skip(_ seconds: Double) {
         player?.skip(by: seconds)
-        NowPlaying.shared.publish()
     }
 
     func seek(to fraction: Double) {
@@ -76,8 +79,7 @@ final class AudioPlayer {
 
     func stop() {
         if let player { PlaybackProgress.shared.detach(player) }
-        if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
-        timeObserver = nil
+        stopClock()
         rateObserver = nil
         player?.pause()
         if player != nil { NowPlaying.shared.detach() }
@@ -85,6 +87,29 @@ final class AudioPlayer {
         current = nil
         isPlaying = false
         elapsed = 0
+    }
+
+    /// Keeps `elapsed` and `duration` current for the mini player, once a
+    /// second (AVPlayer also calls on seeks and play/pause).
+    private func startClock() {
+        guard let player, timeObserver == nil, UIApplication.shared.applicationState != .background else { return }
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main
+        ) { [weak self] time in
+            MainActor.assumeIsolated { self?.tick(time) }
+        }
+    }
+
+    private func stopClock() {
+        if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+    }
+
+    private func tick(_ time: CMTime) {
+        elapsed = time.seconds
+        if let d = player?.currentItem?.duration.seconds, d.isFinite, d > 0 {
+            duration = d
+        }
     }
 }
 
@@ -96,13 +121,9 @@ struct MiniPlayer: View {
         if let video = audio.current {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
-                    AsyncImage(url: video.thumbnailURL) { image in
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    } placeholder: {
-                        Rectangle().fill(.quaternary)
-                    }
-                    .frame(width: 64, height: 36)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    Thumbnail(url: video.thumbnailURL)
+                        .frame(width: 64, height: 36)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(video.title).font(.footnote.weight(.semibold)).lineLimit(1)

@@ -32,7 +32,7 @@ struct FeedScreen: View {
                 await refresh()
             }
         }
-        .onChange(of: model.watchedVersion) { Task { await reload() } }
+        .onChange(of: model.listsVersion) { Task { await reload() } }
         .onChange(of: model.signedIn) { _, signedIn in
             if signedIn && feed == .subscriptions { Task { await refresh() } }
         }
@@ -124,7 +124,7 @@ struct ExploreScreen: View {
             .refreshable { await load() }
         }
         .task { if videos.isEmpty { await load() } }
-        .onChange(of: model.watchedVersion) {
+        .onChange(of: model.listsVersion) {
             Task { videos = await model.refreshed(videos, from: .explore) }
         }
     }
@@ -170,7 +170,7 @@ struct SearchScreen: View {
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search YouTube")
             .onSubmit(of: .search) { Task { await run() } }
         }
-        .onChange(of: model.watchedVersion) {
+        .onChange(of: model.listsVersion) {
             Task { videos = await model.refreshed(videos, from: .search) }
         }
     }
@@ -299,7 +299,7 @@ struct YouScreen: View {
             .refreshable { await reload() }
         }
         .task { await reload() }
-        .onChange(of: model.watchedVersion) { Task { await reload() } }
+        .onChange(of: model.listsVersion) { Task { await reload() } }
     }
 
     private func reload() async {

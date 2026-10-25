@@ -86,8 +86,33 @@ pub fn refresh(source: &dyn FeedSource, s: &Services, progress: Progress) -> Res
         &format!("last_refresh.{}", source.kind().as_str()),
         &chrono::Utc::now().timestamp().to_string(),
     )?;
+    if let Err(e) = prune_daily(&s.db) {
+        log::warn!("pruning the cache: {e:#}");
+    }
     log::info!("refresh {}: {stats}", source.kind().as_str());
     Ok(stats)
+}
+
+/// Old videos no feed lists any more are kept this long (their Shorts
+/// verdicts and durations save work if they turn up again soon).
+const PRUNE_AFTER_DAYS: u32 = 30;
+
+/// Prunes the cache ([`Db::prune`]) at most once a day.
+fn prune_daily(db: &Db) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let last: i64 = db
+        .meta_get("last_prune")?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if now - last < 86_400 {
+        return Ok(());
+    }
+    let pruned = db.prune(PRUNE_AFTER_DAYS)?;
+    db.meta_set("last_prune", &now.to_string())?;
+    if pruned > 0 {
+        log::info!("pruned {pruned} old videos from the cache");
+    }
+    Ok(())
 }
 
 fn enrich(s: &Services, progress: Progress) -> Result<usize> {

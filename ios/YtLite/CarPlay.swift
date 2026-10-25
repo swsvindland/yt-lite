@@ -218,9 +218,7 @@ final class CarPlayController: NSObject, CPTabBarTemplateDelegate {
     // MARK: Thumbnails
 
     private func thumbnail(for video: Video) async -> UIImage? {
-        guard let url = video.thumbnailURL,
-              let (data, _) = try? await URLSession.shared.data(from: url),
-              let image = UIImage(data: data) else { return nil }
+        guard let image = await ThumbnailCache.shared.image(for: video.thumbnailURL) else { return nil }
         let art = square(image)
         thumbnails.setObject(art, forKey: video.id as NSString)
         return art

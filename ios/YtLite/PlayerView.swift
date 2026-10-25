@@ -78,17 +78,23 @@ final class PlayerPresenter: NSObject, AVPlayerViewControllerDelegate {
 
     /// iOS pauses a video whose layer is on screen when the app backgrounds.
     /// Detaching the player from the view keeps the audio going (Picture in
-    /// Picture handles itself).
+    /// Picture handles itself). Nobody sees the picture meanwhile, so the HLS
+    /// stream drops to its smallest variant instead of downloading (and
+    /// decoding) 1080p for hours with the screen off.
     @objc private func didEnterBackground() {
         guard let controller = current, !inPictureInPicture,
               let player = controller.player, player.rate != 0,
               player.audiovisualBackgroundPlaybackPolicy == .continuesIfPossible else { return }
         backgroundPlayer = player
         controller.player = nil
+        player.currentItem?.preferredPeakBitRate = 1
     }
 
     @objc private func willEnterForeground() {
         guard let player = backgroundPlayer, let controller = current else { return }
+        player.currentItem?.preferredPeakBitRate = 0
+        // Without a seek AVPlayer plays out the low-res minutes it buffered first.
+        player.seek(to: player.currentTime(), toleranceBefore: .zero, toleranceAfter: .zero)
         controller.player = player
         backgroundPlayer = nil
     }

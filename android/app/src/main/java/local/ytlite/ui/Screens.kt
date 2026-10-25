@@ -135,7 +135,7 @@ class FeedViewModel(private val model: AppModel, private val feed: Feed) : ViewM
         // The cache again whenever watched state, progress or "hide watched" change.
         viewModelScope.launch {
             combine(
-                model.libraryVersion,
+                model.visibleLibraryVersion,
                 model.settings.map { it.hideWatched }.distinctUntilChanged(),
             ) { _, _ -> }.collect { reload() }
         }
@@ -228,7 +228,7 @@ class ExploreViewModel(private val model: AppModel) : ViewModel() {
     init {
         load()
         viewModelScope.launch {
-            model.libraryVersion.drop(1).collect { videos = model.refreshed(videos, Feed.EXPLORE) }
+            model.visibleLibraryVersion.drop(1).collect { videos = model.refreshed(videos, Feed.EXPLORE) }
         }
     }
 
@@ -301,7 +301,7 @@ class SearchViewModel(private val model: AppModel) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            model.libraryVersion.drop(1).collect { videos = model.refreshed(videos, Feed.SEARCH) }
+            model.visibleLibraryVersion.drop(1).collect { videos = model.refreshed(videos, Feed.SEARCH) }
         }
     }
 
@@ -386,7 +386,7 @@ class HistoryViewModel(private val model: AppModel) : ViewModel() {
     init {
         // Again whenever something is played, removed or changes progress.
         viewModelScope.launch {
-            model.libraryVersion.collect {
+            model.visibleLibraryVersion.collect {
                 runCatching { model.history() }.onSuccess { videos = it }
                 loaded = true
             }

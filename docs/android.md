@@ -42,11 +42,19 @@ this is a personal sideloaded app.
     automatically when you leave the app (Android 12+; earlier versions on Home).
   - **Keep playing in background** (Settings): leaving the app (not into Picture in Picture)
     keeps a video going as audio, with its video track turned off so nothing is decoded or
-    downloaded for it. Off: it pauses.
+    downloaded for it. Off: it pauses. The same happens when the screen goes off with the video
+    in Picture in Picture. The screen stays on only while a video plays.
   - **Audio only** (Settings default, or long-press → Listen): the HLS audio-only rendition,
     in a mini player above the tabs.
 - **Progress**: resumes where you stopped; watched once played to the end (the shared rules in
-  `yt-lite-core`'s `progress.rs`). The service saves on pause, close, the end, and every 10 s.
+  `yt-lite-core`'s `progress.rs`). The service saves on pause, close, the end, and every 30 s
+  while playing.
+- **Battery:** audio (audio only, or a video in the background) buffers in bursts:
+  `AudioBurstLoadControl` fills 10 minutes, then fetches nothing until 2 are left, so the radio
+  sleeps in between instead of waking for every few-second segment. Nothing ticks with the screen
+  off: the mini player's clock is tied to the activity, and the lists reload only while the app is
+  on screen (once on return if anything changed). Coil keeps at most 32 MB of decoded thumbnails
+  and drops them when the UI is hidden.
 - **Android Auto**: Subscriptions, For you, Explore (topic → videos) and History as tabs, search,
   progress on every video, and the Now Playing screen. Videos play audio only. See below.
 - Sign-in: Google's page in a **Custom Tab**. The core listens on a loopback port for Google's

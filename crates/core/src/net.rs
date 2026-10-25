@@ -38,6 +38,11 @@ impl Http {
             .user_agent(USER_AGENT)
             .timeout_global(Some(Duration::from_secs(20)))
             .http_status_as_error(false)
+            // A refresh runs up to 8 requests to youtube.com at once (RSS,
+            // Shorts probes): keep their connections rather than paying for a
+            // new TLS handshake each time (the default keeps 3).
+            .max_idle_connections_per_host(8)
+            .max_idle_connections(16)
             .build()
             .into();
         Self { agent }

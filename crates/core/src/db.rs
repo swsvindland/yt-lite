@@ -122,6 +122,14 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute_batch("UPDATE videos SET played_at = watched_at")?;
     }
     add_column(conn, "videos", "resume_secs", "REAL")?;
+    // History, For you's seeds and its played filter, without scanning every
+    // video ever listed. Created here, not in SCHEMA: older tables only get
+    // `played_at` above. The expression and condition must match the queries.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS videos_history
+            ON videos(max(coalesce(played_at, 0), coalesce(watched_at, 0)) DESC)
+            WHERE played_at IS NOT NULL OR watched_at IS NOT NULL",
+    )?;
     Ok(())
 }
 
@@ -158,6 +166,9 @@ impl Db {
         )?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
+        // The lists reload and progress is saved often: keep their statements
+        // compiled (rusqlite's default of 16 is fewer than this module uses).
+        conn.set_prepared_statement_cache_capacity(48);
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -375,7 +386,7 @@ impl Db {
     pub fn feed(&self, q: FeedQuery) -> Result<Vec<VideoRow>> {
         let cutoff = Utc::now().timestamp() - i64::from(q.max_age_days) * 86_400;
         self.with(|c| {
-            let mut stmt = c.prepare(&format!(
+            let mut stmt = c.prepare_cached(&format!(
                 "SELECT {VIDEO_COLUMNS}
                  FROM feed_items f JOIN videos v ON v.id = f.video_id
                  WHERE f.source = ?1 AND v.short = 0
@@ -395,7 +406,7 @@ impl Db {
     /// Videos played or marked watched, most recent first.
     pub fn history(&self, limit: u32) -> Result<Vec<VideoRow>> {
         self.with(|c| {
-            let mut stmt = c.prepare(&format!(
+            let mut stmt = c.prepare_cached(&format!(
                 "SELECT {VIDEO_COLUMNS} FROM videos v
                  WHERE v.played_at IS NOT NULL OR v.watched_at IS NOT NULL
                  ORDER BY max(coalesce(v.played_at, 0), coalesce(v.watched_at, 0)) DESC
@@ -432,7 +443,7 @@ impl Db {
     /// Most recently played or watched video ids (seeds for For you).
     pub fn recently_played(&self, limit: u32) -> Result<Vec<String>> {
         self.with(|c| {
-            let mut stmt = c.prepare(
+            let mut stmt = c.prepare_cached(
                 "SELECT id FROM videos WHERE played_at IS NOT NULL OR watched_at IS NOT NULL
                  ORDER BY max(coalesce(played_at, 0), coalesce(watched_at, 0)) DESC LIMIT ?1",
             )?;
@@ -443,7 +454,7 @@ impl Db {
     /// Newest displayable videos of a feed (fallback seeds).
     pub fn newest_in_feed(&self, kind: FeedKind, limit: u32) -> Result<Vec<String>> {
         self.with(|c| {
-            let mut stmt = c.prepare(
+            let mut stmt = c.prepare_cached(
                 "SELECT v.id FROM feed_items f JOIN videos v ON v.id = f.video_id
                  WHERE f.source = ?1 AND v.short = 0 ORDER BY v.published DESC LIMIT ?2",
             )?;
@@ -455,7 +466,7 @@ impl Db {
     /// Videos played or marked watched (For you leaves them out).
     pub fn played_ids(&self) -> Result<std::collections::HashSet<String>> {
         self.with(|c| {
-            let mut stmt = c.prepare(
+            let mut stmt = c.prepare_cached(
                 "SELECT id FROM videos WHERE played_at IS NOT NULL OR watched_at IS NOT NULL",
             )?;
             stmt.query_map([], |r| r.get(0))?.collect()
@@ -466,33 +477,28 @@ impl Db {
     pub fn set_watched(&self, id: &str, watched: bool) -> Result<()> {
         let ts = watched.then(|| Utc::now().timestamp());
         self.with(|c| {
-            c.execute(
-                "UPDATE videos SET watched_at=?2, resume_secs=NULL WHERE id=?1",
-                params![id, ts],
-            )
-            .map(drop)
+            c.prepare_cached("UPDATE videos SET watched_at=?2, resume_secs=NULL WHERE id=?1")?
+                .execute(params![id, ts])
+                .map(drop)
         })
     }
 
     /// Records that playback of `id` started.
     pub fn mark_played(&self, id: &str) -> Result<()> {
         self.with(|c| {
-            c.execute(
-                "UPDATE videos SET played_at=?2 WHERE id=?1",
-                params![id, Utc::now().timestamp()],
-            )
-            .map(drop)
+            c.prepare_cached("UPDATE videos SET played_at=?2 WHERE id=?1")?
+                .execute(params![id, Utc::now().timestamp()])
+                .map(drop)
         })
     }
 
     /// Where to resume `id`, if it was stopped partway.
     pub fn resume_position(&self, id: &str) -> Result<Option<f64>> {
         self.with(|c| {
-            c.query_row("SELECT resume_secs FROM videos WHERE id=?1", [id], |r| {
-                r.get(0)
-            })
-            .optional()
-            .map(Option::flatten)
+            c.prepare_cached("SELECT resume_secs FROM videos WHERE id=?1")?
+                .query_row([id], |r| r.get(0))
+                .optional()
+                .map(Option::flatten)
         })
     }
 
@@ -508,30 +514,45 @@ impl Db {
     ) -> Result<Option<Progress>> {
         self.with(|c| {
             let row: Option<(Option<u32>, bool)> = c
-                .query_row(
-                    "SELECT duration_secs, live FROM videos WHERE id=?1",
-                    [id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
+                .prepare_cached("SELECT duration_secs, live FROM videos WHERE id=?1")?
+                .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))
                 .optional()?;
             let Some((listed, false)) = row else {
                 return Ok(None);
             };
             let progress = Progress::at(position, duration.or(listed.map(f64::from)));
             match progress {
-                Progress::Finished => c.execute(
-                    "UPDATE videos SET watched_at=?2, resume_secs=NULL WHERE id=?1",
-                    params![id, Utc::now().timestamp()],
-                ),
-                Progress::Resume(at) => c.execute(
-                    "UPDATE videos SET resume_secs=?2 WHERE id=?1",
-                    params![id, at],
-                ),
-                Progress::Start => {
-                    c.execute("UPDATE videos SET resume_secs=NULL WHERE id=?1", [id])
-                }
+                Progress::Finished => c
+                    .prepare_cached(
+                        "UPDATE videos SET watched_at=?2, resume_secs=NULL WHERE id=?1",
+                    )?
+                    .execute(params![id, Utc::now().timestamp()]),
+                Progress::Resume(at) => c
+                    .prepare_cached("UPDATE videos SET resume_secs=?2 WHERE id=?1")?
+                    .execute(params![id, at]),
+                Progress::Start => c
+                    .prepare_cached("UPDATE videos SET resume_secs=NULL WHERE id=?1")?
+                    .execute([id]),
             }?;
             Ok(Some(progress))
+        })
+    }
+
+    /// Deletes videos first seen more than `older_than_days` ago that no feed
+    /// lists any more and that have no history (old Search, Explore and For
+    /// you results). Without this the table only grows. Returns how many.
+    pub fn prune(&self, older_than_days: u32) -> Result<usize> {
+        let cutoff = Utc::now().timestamp() - i64::from(older_than_days) * 86_400;
+        self.with(|c| {
+            // `NOT IN` builds the set of listed ids once; a correlated
+            // `NOT EXISTS` couldn't use feed_items' (source, video_id) key.
+            c.execute(
+                "DELETE FROM videos
+                 WHERE first_seen < ?1
+                   AND played_at IS NULL AND watched_at IS NULL AND resume_secs IS NULL
+                   AND id NOT IN (SELECT video_id FROM feed_items)",
+                [cutoff],
+            )
         })
     }
 
@@ -867,6 +888,85 @@ mod tests {
         assert!(db.history(10).unwrap().is_empty());
         assert_eq!(db.resume_position("a").unwrap(), None);
         assert!(!row(&db, "a").watched);
+    }
+
+    /// The query plan, one step per line.
+    fn plan(db: &Db, sql: &str) -> String {
+        db.with(|c| {
+            let mut stmt = c.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+            let steps: Vec<String> = stmt
+                .query_map([], |r| r.get(3))?
+                .collect::<rusqlite::Result<_>>()?;
+            Ok(steps.join("\n"))
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn history_queries_use_the_history_index() {
+        let db = progress_db();
+        let history = format!(
+            "SELECT {VIDEO_COLUMNS} FROM videos v
+             WHERE v.played_at IS NOT NULL OR v.watched_at IS NOT NULL
+             ORDER BY max(coalesce(v.played_at, 0), coalesce(v.watched_at, 0)) DESC LIMIT 10"
+        );
+        let recent = "SELECT id FROM videos WHERE played_at IS NOT NULL OR watched_at IS NOT NULL
+             ORDER BY max(coalesce(played_at, 0), coalesce(watched_at, 0)) DESC LIMIT 10";
+        for sql in [history.as_str(), recent] {
+            let plan = plan(&db, sql);
+            assert!(plan.contains("videos_history"), "{plan}");
+            assert!(
+                !plan.contains("TEMP B-TREE"),
+                "sorts instead of reading the index in order: {plan}"
+            );
+        }
+    }
+
+    #[test]
+    fn prune_drops_only_old_unlisted_videos_without_history() {
+        let db = progress_db();
+        db.upsert_items(
+            FeedKind::Search,
+            &[
+                item("old", "UC1", LinkHint::WatchLink, 1),
+                item("played", "UC1", LinkHint::WatchLink, 1),
+                item("resumed", "UC1", LinkHint::WatchLink, 1),
+            ],
+            &Retain::OnlyFetched,
+        )
+        .unwrap();
+        db.mark_played("played").unwrap();
+        db.with(|c| {
+            c.execute(
+                "UPDATE videos SET resume_secs = 60 WHERE id = 'resumed'",
+                [],
+            )
+        })
+        .unwrap();
+        // A newer search replaces the old results; they were first seen long ago.
+        db.upsert_items(
+            FeedKind::Search,
+            &[item("new", "UC1", LinkHint::WatchLink, 1)],
+            &Retain::OnlyFetched,
+        )
+        .unwrap();
+        db.with(|c| c.execute("UPDATE videos SET first_seen = first_seen - 60 * 86400", []))
+            .unwrap();
+
+        assert_eq!(db.prune(30).unwrap(), 1);
+        let ids: Vec<String> = db
+            .with(|c| {
+                c.prepare("SELECT id FROM videos ORDER BY id")?
+                    .query_map([], |r| r.get(0))?
+                    .collect()
+            })
+            .unwrap();
+        // Still listed ("a", "live" in Subscriptions, "new" in Search) or in History.
+        assert_eq!(ids, ["a", "live", "new", "played", "resumed"]);
+        // Nothing is old enough at 90 days.
+        db.upsert_items(FeedKind::Search, &[], &Retain::OnlyFetched)
+            .unwrap();
+        assert_eq!(db.prune(90).unwrap(), 0);
     }
 
     #[test]

@@ -60,13 +60,9 @@ struct VideoCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
-                AsyncImage(url: video.thumbnailURL) { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Rectangle().fill(.quaternary)
-                }
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                Thumbnail(url: video.thumbnailURL)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 if let duration = video.durationText {
                     Text(duration)
@@ -93,6 +89,69 @@ struct VideoCard: View {
         }
         .opacity(video.watched ? 0.55 : 1)
         .contentShape(Rectangle())
+    }
+}
+
+/// A video thumbnail. Unlike AsyncImage, scrolling back doesn't download and
+/// decode it again (`ThumbnailCache`), and a card that scrolls away lets go of
+/// its image, so a long list doesn't keep hundreds of them in memory.
+struct Thumbnail: View {
+    let url: URL?
+    @State private var loaded: UIImage?
+
+    var body: some View {
+        Rectangle()
+            .fill(.quaternary)
+            .overlay {
+                if let image = loaded ?? ThumbnailCache.shared.cached(url) {
+                    Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
+                }
+            }
+            .clipped()
+            .task(id: url) { loaded = await ThumbnailCache.shared.image(for: url) }
+            .onDisappear { loaded = nil }
+    }
+}
+
+/// Decoded thumbnails, a few screens' worth (NSCache also gives them up under
+/// memory pressure), over a disk cache of the JPEGs. Emptied when the app goes
+/// to the background, where playback can run for hours.
+final class ThumbnailCache: @unchecked Sendable {
+    static let shared = ThumbnailCache()
+
+    /// Thread-safe.
+    private let images = NSCache<NSURL, UIImage>()
+    private let session: URLSession
+
+    private init() {
+        // mqdefault decodes to 320×180 (230 KB): about 100 of them.
+        images.totalCostLimit = 24 << 20
+        let config = URLSessionConfiguration.default
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("thumbnails", isDirectory: true)
+        // ~10 KB each. Decoded images are the memory cache.
+        config.urlCache = URLCache(memoryCapacity: 0, diskCapacity: 100 << 20, directory: directory)
+        session = URLSession(configuration: config)
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
+        ) { [images] _ in
+            images.removeAllObjects()
+        }
+    }
+
+    func cached(_ url: URL?) -> UIImage? {
+        url.flatMap { images.object(forKey: $0 as NSURL) }
+    }
+
+    /// Decoded off the main thread, ready to draw.
+    func image(for url: URL?) async -> UIImage? {
+        guard let url else { return nil }
+        if let hit = cached(url) { return hit }
+        guard let (data, _) = try? await session.data(from: url),
+              let image = await UIImage(data: data)?.byPreparingForDisplay() else { return nil }
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? data.count
+        images.setObject(image, forKey: url as NSURL, cost: cost)
+        return image
     }
 }
 

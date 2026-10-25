@@ -20,9 +20,10 @@ final class PlaybackProgress {
         guard !video.live else { return }
         self.player = player
         self.video = video
-        // Often enough that little is lost if iOS ends the app in the background.
+        // Often enough that little is lost if iOS ends the app in the
+        // background (pausing, stopping and backgrounding save too).
         timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 10, preferredTimescale: 1), queue: .main
+            forInterval: CMTime(seconds: 30, preferredTimescale: 1), queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.save(refresh: false) }
         }

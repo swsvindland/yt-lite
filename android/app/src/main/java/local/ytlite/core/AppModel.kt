@@ -9,12 +9,16 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -60,6 +64,19 @@ class AppModel(private val app: Application) {
     private val _libraryVersion = MutableStateFlow(0)
     val libraryVersion = _libraryVersion.asStateFlow()
 
+    /** MainActivity is on screen (started). */
+    private val visible = MutableStateFlow(false)
+
+    /**
+     * [libraryVersion] while the app is on screen. The phone's lists reload on
+     * this rather than on every pause and progress save while you listen with
+     * the screen off; coming back reloads once if anything changed.
+     */
+    val visibleLibraryVersion: Flow<Int> =
+        combine(_libraryVersion, visible) { version, visible -> version.takeIf { visible } }
+            .filterNotNull()
+            .distinctUntilChanged()
+
     /** Errors for the snackbar. */
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages = _messages.asSharedFlow()
@@ -87,6 +104,10 @@ class AppModel(private val app: Application) {
 
     val hasGoogleClient: Boolean get() = core?.hasGoogleClient() ?: false
     val exploreTopics: List<String> by lazy { core?.exploreTopics() ?: emptyList() }
+
+    fun setVisible(visible: Boolean) {
+        this.visible.value = visible
+    }
 
     fun updateSettings(change: (Settings) -> Settings) {
         scope.launch { settingsStore.update(change) }

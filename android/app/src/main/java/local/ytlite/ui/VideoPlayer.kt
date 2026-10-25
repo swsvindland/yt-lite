@@ -44,7 +44,20 @@ fun VideoPlayer(player: Player, onClose: () -> Unit) {
     val activity = LocalActivity.current as MainActivity
     val inPip = rememberIsInPipMode(activity)
     var controlsVisible by remember { mutableStateOf(true) }
+    var keepScreenOn by remember(player) { mutableStateOf(player.wantsScreenOn) }
     BackHandler(onBack = onClose)
+
+    // The screen stays on while the video plays (or is about to), not while
+    // it sits paused or finished.
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                keepScreenOn = player.wantsScreenOn
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
 
     DisposableEffect(activity) {
         activity.setVideoShowing(true)
@@ -65,7 +78,6 @@ fun VideoPlayer(player: Player, onClose: () -> Unit) {
                     this.player = player
                     setShowNextButton(false)
                     setShowPreviousButton(false)
-                    keepScreenOn = true
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
                             controlsVisible = visibility == android.view.View.VISIBLE
@@ -76,6 +88,7 @@ fun VideoPlayer(player: Player, onClose: () -> Unit) {
             update = { view ->
                 view.player = player
                 view.useController = !inPip
+                view.keepScreenOn = keepScreenOn
             },
             onRelease = { it.player = null },
             modifier = Modifier.fillMaxSize(),
@@ -90,6 +103,9 @@ fun VideoPlayer(player: Player, onClose: () -> Unit) {
         }
     }
 }
+
+private val Player.wantsScreenOn: Boolean
+    get() = playWhenReady && (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING)
 
 @Composable
 private fun rememberIsInPipMode(activity: ComponentActivity): Boolean {

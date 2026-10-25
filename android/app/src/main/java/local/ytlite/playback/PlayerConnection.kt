@@ -90,8 +90,9 @@ class PlayerConnection(context: Context, private val onError: (String) -> Unit) 
     }
 
     /**
-     * The app left the screen (and isn't in Picture in Picture). A playing
-     * video keeps going as audio only (`keepPlaying`, Settings) or pauses.
+     * Nothing of the app is visible (left without Picture in Picture, or the
+     * screen is off). A playing video keeps going as audio only
+     * (`keepPlaying`, Settings) or pauses.
      */
     fun onAppHidden(keepPlaying: Boolean) {
         val c = _controller.value ?: return

@@ -23,8 +23,14 @@ final class AppModel {
     var signingIn = false
     var resolving = false
     var errorMessage: String?
-    /// Bumped when watched state or progress changes so screens can reload.
-    var watchedVersion = 0
+    /// Bumped when watched state or progress changes. CarPlay re-renders on it.
+    var watchedVersion = 0 { didSet { syncLists() } }
+    /// `watchedVersion` while the phone's screen shows the app: its lists
+    /// reload on this, not on every pause and progress save while you listen
+    /// with the screen off. Coming back reloads once if anything changed.
+    private(set) var listsVersion = 0
+    /// The app's window is in the foreground (RootView keeps this current).
+    var onScreen = false { didSet { syncLists() } }
     /// Set if the iOS Keychain can't store the sign-in token.
     var credentialProblem: String?
 
@@ -76,6 +82,10 @@ final class AppModel {
     }
 
     var hasGoogleClient: Bool { core?.hasGoogleClient() ?? false }
+
+    private func syncLists() {
+        if onScreen && listsVersion != watchedVersion { listsVersion = watchedVersion }
+    }
 
     func videos(_ feed: Feed) async throws -> [Video] {
         guard let core else { return [] }
@@ -258,9 +268,14 @@ extension Video {
     /// "watched 2 hours ago" (History).
     var watchedText: String? { lastPlayed.map { "watched \(Self.relative($0))" } }
 
-    private static func relative(_ unix: Int64) -> String {
+    /// One for every card (they're costly to create).
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
-        return formatter.localizedString(for: Date(timeIntervalSince1970: TimeInterval(unix)), relativeTo: .now)
+        return formatter
+    }()
+
+    private static func relative(_ unix: Int64) -> String {
+        relativeFormatter.localizedString(for: Date(timeIntervalSince1970: TimeInterval(unix)), relativeTo: .now)
     }
 }

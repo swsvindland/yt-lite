@@ -10,7 +10,8 @@ final class NowPlaying {
 
     private weak var player: AVPlayer?
     private var info: [String: Any] = [:]
-    private var timeObserver: Any?
+    private var observations: [NSKeyValueObservation] = []
+    private var timeJumped: NSObjectProtocol?
     private var commandsInstalled = false
 
     func attach(player: AVPlayer, video: Video) {
@@ -28,18 +29,27 @@ final class NowPlaying {
             info[MPMediaItemPropertyPlaybackDuration] = Double(secs)
         }
         publish()
-        // Keep elapsed time and rate current (the lock screen extrapolates between updates).
-        timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 5, preferredTimescale: 1), queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.publish() }
+        // The lock screen extrapolates the elapsed time from the rate, so it
+        // only needs to hear about play/pause/stalls, seeks (from any player
+        // UI) and the real duration. No timer: this runs for hours with the
+        // screen off.
+        let publishSoon: @Sendable () -> Void = { [weak self] in Task { @MainActor in self?.publish() } }
+        observations = [player.observe(\.timeControlStatus) { _, _ in publishSoon() }]
+        if let item = player.currentItem {
+            observations.append(item.observe(\.duration) { _, _ in publishSoon() })
+            timeJumped = NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.timeJumpedNotification, object: item, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.publish() }
+            }
         }
         Task { await loadArtwork(for: video) }
     }
 
     func detach() {
-        if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
-        timeObserver = nil
+        observations = []
+        if let timeJumped { NotificationCenter.default.removeObserver(timeJumped) }
+        timeJumped = nil
         player = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }

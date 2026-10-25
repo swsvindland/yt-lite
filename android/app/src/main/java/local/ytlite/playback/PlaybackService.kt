@@ -2,12 +2,14 @@ package local.ytlite.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -20,6 +22,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import java.util.concurrent.Executors
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -43,7 +46,10 @@ class PlaybackService : MediaLibraryService() {
     private val scope = MainScope()
     /** Core calls block (network, SQLite). */
     private val background = MoreExecutors.listeningDecorator(Executors.newCachedThreadPool())
+    /** Saves the position every [SAVE_EVERY_MS] while playing. */
+    private var periodicSave: Job? = null
 
+    @OptIn(UnstableApi::class) // setLoadControl
     override fun onCreate() {
         super.onCreate()
         val player = ExoPlayer.Builder(this)
@@ -58,11 +64,25 @@ class PlaybackService : MediaLibraryService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .setSeekBackIncrementMs(10_000)
             .setSeekForwardIncrementMs(30_000)
+            .setLoadControl(AudioBurstLoadControl())
             .build()
         player.addListener(object : Player.Listener {
-            // Paused (by the user, a call, unplugged headphones) or finished.
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (!isPlaying) saveProgress(refresh = true)
+                // Often enough that little is lost if Android ends the app;
+                // nothing ticks while paused.
+                periodicSave?.cancel()
+                periodicSave = if (isPlaying) {
+                    scope.launch {
+                        while (true) {
+                            delay(SAVE_EVERY_MS)
+                            saveProgress(refresh = false)
+                        }
+                    }
+                } else {
+                    // Paused (by the user, a call, unplugged headphones) or finished.
+                    saveProgress(refresh = true)
+                    null
+                }
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -90,13 +110,6 @@ class PlaybackService : MediaLibraryService() {
                 setSmallIcon(R.drawable.ic_notification)
             }
         )
-        // Often enough that little is lost if Android ends the app.
-        scope.launch {
-            while (true) {
-                delay(10_000)
-                if (player.isPlaying) saveProgress(refresh = false)
-            }
-        }
         // Android Auto's lists show progress; refresh them when it changes.
         scope.launch {
             model.libraryVersion.drop(1).collect {
@@ -263,6 +276,10 @@ class PlaybackService : MediaLibraryService() {
                 session.sendError(controller, SessionError(SessionError.ERROR_UNKNOWN, describe(e)))
                 throw e
             }
+    }
+
+    private companion object {
+        const val SAVE_EVERY_MS = 30_000L
     }
 
     private fun skipButton(icon: Int, command: Int, name: String, slot: Int) =

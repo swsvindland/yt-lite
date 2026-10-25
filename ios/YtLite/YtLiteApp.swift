@@ -56,7 +56,8 @@ struct RootView: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            model.onScreen = phase != .background
             if phase == .active { Task { await model.checkSignIn() } }
         }
     }
